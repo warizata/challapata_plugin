@@ -79,6 +79,7 @@ from .colegio_riberalta_dialog import (
     SelectTitularBuscaNombre,
     SelectTitularFeatureBuscaRef,
     SelectTitularFeatureBuscaNombre,
+    DialogoConstruccion,
     
     # Manejo de construcciones y terrenos
     SelectConstruccionPlantaBuscaRef,
@@ -132,6 +133,9 @@ from .catastro import (
     OrdenesTrabajo
 )
 
+# Importar la nueva clase de órdenes de trabajo
+#from .dialogs.ordenes_dialog import OrdenesTrabajo
+
 from qgis.core import (
     QgsDataSourceUri,
     QgsFillSymbol,
@@ -167,10 +171,12 @@ from qgis.core import (
     QgsProject,
     QgsVectorLayer,
     QgsLayoutItemLabel,
-    QgsFeature
+    QgsFeature,
+    Qgis
 )
 from .export_database import ExportDialog
 from .DriverDataBase import DataBaseDriver
+#from .dialogo_construccion import DialogoConstruccion
 from .resources import *
 
 class MiPlugin:
@@ -605,46 +611,45 @@ class DialogoConstruccion(QDialog):
     def __init__(self, iface, parent=None, construccion_id=None):
         """Constructor de la clase DialogoConstruccion."""
         super(DialogoConstruccion, self).__init__(parent)
-        
-        # Cargar la interfaz desde el archivo .ui
-        uic.loadUi(os.path.join(os.path.dirname(__file__), 'export_database_feature_construccion.ui'), self)
-        
+ 
+        # CAMBIO 1: ruta apunta a UI/dialogo_construccion.ui
+        uic.loadUi(
+            os.path.join(os.path.dirname(__file__), 'UI', 'dialogo_construccion.ui'),
+            self
+        )
+ 
         self.iface = iface
         self.construccion_id = construccion_id
         self.setupDb()
         self.inicializar_combos()
         self.conectar_eventos()
-        
+ 
         # Cargar datos existentes inmediatamente
         self.cargar_construcciones_existentes()
-        
+ 
         # Si se proporciona un ID de construcción, cargarlo automáticamente
         if construccion_id:
             self.cargar_construccion_por_id(construccion_id)
             self.setWindowTitle(f"Gestión de Construcción - ID: {construccion_id}")
-
+ 
     def inicializar_combos(self):
         """Inicializa los combos con valores predeterminados."""
-        # Configurar ComboBox de conservación
         conservacion_items = ["Seleccione...", "Bueno", "Regular", "Malo", "Ruina"]
         self.comboBox_conservacion.clear()
         self.comboBox_conservacion.addItems(conservacion_items)
-        
-        # Configurar ComboBox de uso
+ 
         uso_items = ["Seleccione...", "Residencial", "Comercial", "Industrial", "Servicios", "Otro"]
         self.comboBox_uso.clear()
         self.comboBox_uso.addItems(uso_items)
-        
-        # Configurar ComboBox de tipo
+ 
         tipo_items = ["Seleccione...", "Casa", "Edificio", "Galpón", "Local", "Otro"]
         self.comboBox_tipo.clear()
         self.comboBox_tipo.addItems(tipo_items)
-        
-        # Configurar ComboBox de revestimiento
+ 
         revestimiento_items = ["Seleccione...", "Ladrillo", "Hormigón", "Madera", "Metal", "Otro"]
         self.comboBox_revestimiento.clear()
         self.comboBox_revestimiento.addItems(revestimiento_items)
-
+ 
     def cargar_construccion_por_id(self, id_construccion):
         """Cargar una construcción específica por su ID."""
         try:
@@ -654,84 +659,90 @@ class DialogoConstruccion(QDialog):
                 WHERE id = {id_construccion}
             """
             resultado = self.db.read(sql=query, multi=False)
-            
+ 
             if resultado:
                 self.mostrar_datos_construccion(resultado)
-                
-                # Calcular número de plantas basado en el código y numbloque
                 self.calcular_y_actualizar_num_plantas(id_construccion)
-                
-                # Identificar planta baja automáticamente
                 self.identificar_planta_baja_y_ordenar(id_construccion)
-                
-                # Destacar visualmente el item de la lista correspondiente
+                self.cargar_tabla_plantas(id_construccion)          # NUEVO
                 self.destacar_item_en_lista(id_construccion)
             else:
                 print(f"No se encontró la construcción con ID: {id_construccion}")
-                QMessageBox.warning(self, "Advertencia", f"No se encontró la construcción con ID: {id_construccion}")
-                
+                QMessageBox.warning(self, "Advertencia",
+                    f"No se encontró la construcción con ID: {id_construccion}")
+ 
         except Exception as e:
             print(f"Error al cargar construcción por ID: {str(e)}")
             import traceback
             traceback.print_exc()
-
+ 
     def setupDb(self):
         """Configurar la conexión a la base de datos."""
         try:
-            # Aquí asumimos que tienes una clase Driver similar a tu código original
-            # Si tienes otro mecanismo de conexión, adáptalo según sea necesario
-            from .DriverDataBase import DataBaseDriver
+            # CAMBIO 2: DataBaseDriver ya está importado al inicio del archivo
             self.db = DataBaseDriver()
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Error al conectar con la base de datos: {str(e)}")
             self.close()
-
+ 
     def conectar_eventos(self):
         """Conectar los eventos de la interfaz."""
-        # Conectar botones principales
         if hasattr(self, 'btn_exportdb'):
             self.btn_exportdb.clicked.connect(self.actualizar_construccion)
         elif hasattr(self, 'btn_guardar'):
             self.btn_guardar.clicked.connect(self.actualizar_construccion)
-            
+ 
         if hasattr(self, 'btn_cerrar'):
             self.btn_cerrar.clicked.connect(self.close)
-            
-        # Conectar búsqueda
+ 
         if hasattr(self, 'pushButton'):
             self.pushButton.clicked.connect(self.buscar_construccion)
-            
+ 
         if hasattr(self, 'searchBox') and hasattr(self, 'list_bbdd'):
             self.searchBox.textChanged.connect(self.filtrar_lista)
-            self.list_bbdd.itemClicked.connect(self.cargar_datos_construccion)
-
+            self.list_bbdd.itemClicked.connect(self.seleccionar_construccion_y_resaltar)
+ 
+        # CAMBIO 3: conexiones nuevas de gestión de plantas
+        if hasattr(self, 'table_plantas'):
+            self.table_plantas.itemClicked.connect(self.cargar_planta_en_panel)
+        if hasattr(self, 'btn_agregar_planta'):
+            self.btn_agregar_planta.clicked.connect(self.agregar_planta)
+        if hasattr(self, 'btn_actualizar_planta'):
+            self.btn_actualizar_planta.clicked.connect(self.actualizar_planta_seleccionada)
+        if hasattr(self, 'btn_eliminar_planta'):
+            self.btn_eliminar_planta.clicked.connect(self.eliminar_planta_seleccionada)
+ 
     def cargar_construcciones_existentes(self):
-        """Cargar la lista de construcciones existentes."""
+        """Cargar la lista de construcciones incluyendo numconstruccion."""
         try:
             query = """
-                SELECT id, codigo, numbloque
-                FROM catastro.construcciones19 
-                ORDER BY id
+                SELECT id, codigo, numbloque, numconstruccion
+                FROM catastro.construcciones19
+                ORDER BY codigo, numbloque, numconstruccion, id
             """
             resultados = self.db.read(sql=query, multi=True)
-            
+ 
             if hasattr(self, 'list_bbdd'):
                 self.list_bbdd.clear()
-                for construccion in resultados:
-                    item_text = f"ID: {construccion['id']} - Código: {construccion['codigo']} - Bloque: {construccion['numbloque']}"
+                for c in resultados:
+                    nc = c.get('numconstruccion') or 1
+                    item_text = (f"ID: {c['id']} - "
+                                 f"Código: {c['codigo']} - "
+                                 f"Bloque: {c['numbloque']} - "
+                                 f"Constr: {nc}")
                     self.list_bbdd.addItem(item_text)
-                
+ 
         except Exception as e:
             print(f"Error al cargar construcciones: {str(e)}")
             QMessageBox.warning(self, "Error", f"Error al cargar construcciones: {str(e)}")
-
+ 
     def filtrar_lista(self, texto):
         """Filtrar la lista según el texto de búsqueda."""
         if hasattr(self, 'list_bbdd'):
             for i in range(self.list_bbdd.count()):
                 item = self.list_bbdd.item(i)
                 item.setHidden(texto.lower() not in item.text().lower())
-
+ 
     def destacar_item_en_lista(self, id_construccion):
         """Destaca el item correspondiente al ID de construcción en la lista."""
         if hasattr(self, 'list_bbdd'):
@@ -740,21 +751,20 @@ class DialogoConstruccion(QDialog):
                 if f"ID: {id_construccion}" in item.text():
                     self.list_bbdd.setCurrentItem(item)
                     break
-
+ 
     def buscar_construccion(self):
         """Buscar una construcción específica."""
         if not hasattr(self, 'searchBox'):
             return
-            
+ 
         texto_busqueda = self.searchBox.text().strip()
         if not texto_busqueda:
             QMessageBox.warning(self, "Advertencia", "Ingrese un código o ID para buscar")
             return
-
+ 
         try:
-            # Intentar interpretar como ID si es numérico
             is_id = texto_busqueda.isdigit()
-            
+ 
             if is_id:
                 query = f"""
                     SELECT * FROM catastro.construcciones19 
@@ -765,274 +775,275 @@ class DialogoConstruccion(QDialog):
                     SELECT * FROM catastro.construcciones19 
                     WHERE codigo LIKE '%{texto_busqueda}%'
                 """
-                
+ 
             resultado = self.db.read(sql=query, multi=True)
-            
+ 
             if resultado and len(resultado) > 0:
                 self.mostrar_datos_construccion(resultado[0])
-                
-                # Si encontramos la construcción, guardamos su ID
                 self.construccion_id = resultado[0].get('id')
-                
-                # Calcular y actualizar plantas
                 self.calcular_y_actualizar_num_plantas(self.construccion_id)
-                
-                # Identificar planta baja
                 self.identificar_planta_baja_y_ordenar(self.construccion_id)
-                
-                # Destacar en la lista
+                self.cargar_tabla_plantas(self.construccion_id)     # NUEVO
                 self.destacar_item_en_lista(self.construccion_id)
             else:
                 QMessageBox.information(self, "Información", "No se encontró la construcción")
-                
+ 
         except Exception as e:
             print(f"Error en la búsqueda: {str(e)}")
             QMessageBox.warning(self, "Error", f"Error en la búsqueda: {str(e)}")
-
+ 
     def mostrar_datos_construccion(self, datos):
-        """Mostrar los datos de la construcción en el formulario."""
+        """Mostrar los datos de la construcción incluyendo numconstruccion."""
         try:
-            # Verificar que los widgets necesarios existen
             if not all(hasattr(self, attr) for attr in ['cod', 'anyo', 'plantas', 'dormitorios', 'banyos']):
                 print("Faltan widgets necesarios en el formulario")
                 return
-                
-            # Datos básicos - adaptamos para manejar tanto dict como objetos
-            self.cod.setPlainText(str(datos.get('id') if isinstance(datos, dict) else getattr(datos, 'id', '')))
-            self.anyo.setPlainText(str(datos.get('anyo') if isinstance(datos, dict) else getattr(datos, 'anyo', '')))
-            self.plantas.setPlainText(str(datos.get('plantas') if isinstance(datos, dict) else getattr(datos, 'plantas', '')))
-            self.dormitorios.setPlainText(str(datos.get('dormitorios') if isinstance(datos, dict) else getattr(datos, 'dormitorios', '')))
-            self.banyos.setPlainText(str(datos.get('banyos') if isinstance(datos, dict) else getattr(datos, 'banyos', '')))
-            
-            # Comboboxes - convertimos índices a textos según corresponda
-            conservacion_idx = int(datos.get('estadoconservacion', 0) if isinstance(datos, dict) else getattr(datos, 'estadoconservacion', 0))
-            uso_idx = int(datos.get('uso', 0) if isinstance(datos, dict) else getattr(datos, 'uso', 0))
-            tipo_idx = int(datos.get('tipoconstruccion', 0) if isinstance(datos, dict) else getattr(datos, 'tipoconstruccion', 0))
-            revestimiento_idx = int(datos.get('revestimiento', 0) if isinstance(datos, dict) else getattr(datos, 'revestimiento', 0))
-            
-            # Asegurar que los índices estén dentro del rango válido
-            self.comboBox_conservacion.setCurrentIndex(min(conservacion_idx, self.comboBox_conservacion.count()-1))
-            self.comboBox_uso.setCurrentIndex(min(uso_idx, self.comboBox_uso.count()-1))
-            self.comboBox_tipo.setCurrentIndex(min(tipo_idx, self.comboBox_tipo.count()-1))
-            self.comboBox_revestimiento.setCurrentIndex(min(revestimiento_idx, self.comboBox_revestimiento.count()-1))
-            
-            # Checkboxes para características
-            self.checkBox_ascensor.setChecked(bool(datos.get('ascensores', False) if isinstance(datos, dict) else getattr(datos, 'ascensores', False)))
-            self.checkBox_calefaccion.setChecked(bool(datos.get('calefaccion', False) if isinstance(datos, dict) else getattr(datos, 'calefaccion', False)))
-            self.checkBox_aire.setChecked(bool(datos.get('aire', False) if isinstance(datos, dict) else getattr(datos, 'aire', False)))
-            self.checkBox_sanitarios.setChecked(bool(datos.get('sanitarios', False) if isinstance(datos, dict) else getattr(datos, 'sanitarios', False)))
-            self.checkBox_escalera.setChecked(bool(datos.get('escalera', False) if isinstance(datos, dict) else getattr(datos, 'escalera', False)))
-            self.checkBox_lavandera.setChecked(bool(datos.get('lavanderia', False) if isinstance(datos, dict) else getattr(datos, 'lavanderia', False)))
-            self.checkBox_agua.setChecked(bool(datos.get('tanque', False) if isinstance(datos, dict) else getattr(datos, 'tanque', False)))
-            self.checkBox_area.setChecked(bool(datos.get('servicio', False) if isinstance(datos, dict) else getattr(datos, 'servicio', False)))
-            
+ 
+            self.cod.setPlainText(str(
+                datos.get('id') if isinstance(datos, dict) else getattr(datos, 'id', '')))
+            self.anyo.setPlainText(str(
+                datos.get('anyo') if isinstance(datos, dict) else getattr(datos, 'anyo', '')))
+            self.plantas.setPlainText(str(
+                datos.get('plantas') if isinstance(datos, dict) else getattr(datos, 'plantas', '')))
+            self.dormitorios.setPlainText(str(
+                datos.get('dormitorios') if isinstance(datos, dict) else getattr(datos, 'dormitorios', '')))
+            self.banyos.setPlainText(str(
+                datos.get('banyos') if isinstance(datos, dict) else getattr(datos, 'banyos', '')))
+ 
+            # numbloque
+            if hasattr(self, 'numbloque'):
+                val = datos.get('numbloque') if isinstance(datos, dict) else getattr(datos, 'numbloque', '')
+                self.numbloque.setPlainText(str(val) if val is not None else '')
+ 
+            # NUEVO: numconstruccion
+            if hasattr(self, 'numconstruccion'):
+                val = datos.get('numconstruccion') if isinstance(datos, dict) else getattr(datos, 'numconstruccion', '')
+                self.numconstruccion.setPlainText(str(val) if val is not None else '1')
+ 
+            # Comboboxes — proteger NULL con 'or 0'
+            def safe_int(campo):
+                val = datos.get(campo) if isinstance(datos, dict) else getattr(datos, campo, None)
+                return int(val or 0)
+ 
+            self.comboBox_conservacion.setCurrentIndex(
+                min(safe_int('estadoconservacion'), self.comboBox_conservacion.count()-1))
+            self.comboBox_uso.setCurrentIndex(
+                min(safe_int('uso'), self.comboBox_uso.count()-1))
+            self.comboBox_tipo.setCurrentIndex(
+                min(safe_int('tipoconstruccion'), self.comboBox_tipo.count()-1))
+            self.comboBox_revestimiento.setCurrentIndex(
+                min(safe_int('revestimiento'), self.comboBox_revestimiento.count()-1))
+ 
+            def get_bool(campo):
+                val = datos.get(campo, False) if isinstance(datos, dict) else getattr(datos, campo, False)
+                return bool(val)
+ 
+            self.checkBox_ascensor.setChecked(get_bool('ascensores'))
+            self.checkBox_calefaccion.setChecked(get_bool('calefaccion'))
+            self.checkBox_aire.setChecked(get_bool('aire'))
+            self.checkBox_sanitarios.setChecked(get_bool('sanitarios'))
+            self.checkBox_escalera.setChecked(get_bool('escalera'))
+            self.checkBox_lavandera.setChecked(get_bool('lavanderia'))
+            self.checkBox_agua.setChecked(get_bool('tanque'))
+            self.checkBox_area.setChecked(get_bool('servicio'))
+ 
         except Exception as e:
             print(f"Error al mostrar datos: {str(e)}")
             QMessageBox.warning(self, "Error", f"Error al mostrar datos: {str(e)}")
-
+ 
     def recopilar_datos_formulario(self):
-        """Recopilar los datos actuales del formulario."""
+        """Recopilar datos incluyendo numbloque y numconstruccion."""
         try:
-            return {
-                'id': self.cod.toPlainText().strip(),
-                'anyo': self.anyo.toPlainText().strip(),
-                'plantas': self.plantas.toPlainText().strip(),
-                'dormitorios': self.dormitorios.toPlainText().strip(),
-                'banyos': self.banyos.toPlainText().strip(),
+            datos = {
+                'id':               self.cod.toPlainText().strip(),
+                'anyo':             self.anyo.toPlainText().strip(),
+                'plantas':          self.plantas.toPlainText().strip(),
+                'dormitorios':      self.dormitorios.toPlainText().strip(),
+                'banyos':           self.banyos.toPlainText().strip(),
                 'estadoconservacion': self.comboBox_conservacion.currentIndex(),
-                'uso': self.comboBox_uso.currentIndex(),
+                'uso':              self.comboBox_uso.currentIndex(),
                 'tipoconstruccion': self.comboBox_tipo.currentIndex(),
-                'revestimiento': self.comboBox_revestimiento.currentIndex(),
-                'ascensores': self.checkBox_ascensor.isChecked(),
-                'calefaccion': self.checkBox_calefaccion.isChecked(),
-                'aire': self.checkBox_aire.isChecked(),
-                'sanitarios': self.checkBox_sanitarios.isChecked(),
-                'escalera': self.checkBox_escalera.isChecked(),
-                'lavanderia': self.checkBox_lavandera.isChecked(),
-                'tanque': self.checkBox_agua.isChecked(),
-                'servicio': self.checkBox_area.isChecked()
+                'revestimiento':    self.comboBox_revestimiento.currentIndex(),
+                'ascensores':       self.checkBox_ascensor.isChecked(),
+                'calefaccion':      self.checkBox_calefaccion.isChecked(),
+                'aire':             self.checkBox_aire.isChecked(),
+                'sanitarios':       self.checkBox_sanitarios.isChecked(),
+                'escalera':         self.checkBox_escalera.isChecked(),
+                'lavanderia':       self.checkBox_lavandera.isChecked(),
+                'tanque':           self.checkBox_agua.isChecked(),
+                'servicio':         self.checkBox_area.isChecked(),
             }
+            # numbloque
+            if hasattr(self, 'numbloque'):
+                datos['numbloque'] = self.numbloque.toPlainText().strip() or '0'
+            # NUEVO: numconstruccion
+            if hasattr(self, 'numconstruccion'):
+                datos['numconstruccion'] = self.numconstruccion.toPlainText().strip() or '1'
+            return datos
         except Exception as e:
             print(f"Error al recopilar datos: {str(e)}")
             QMessageBox.warning(self, "Error", f"Error al recopilar datos: {str(e)}")
             return {}
-
+ 
     def validar_datos(self, datos):
         """Validar los datos antes de guardar."""
         if not datos.get('id'):
             QMessageBox.warning(self, "Validación", "El ID de construcción es obligatorio")
             return False
-            
+ 
         campos_numericos = ['anyo', 'plantas', 'dormitorios', 'banyos']
         for campo in campos_numericos:
             if datos.get(campo) and not datos.get(campo).isdigit():
                 QMessageBox.warning(self, "Validación", f"El campo {campo} debe ser numérico")
                 return False
-                
+ 
         return True
-
+ 
     def actualizar_construccion(self):
-        """Actualizar o crear una nueva construcción."""
+        """Actualizar la construcción incluyendo numbloque y numconstruccion."""
         datos = self.recopilar_datos_formulario()
-        
+ 
         if not self.validar_datos(datos):
             return
-            
+ 
         try:
             id_construccion = datos['id']
-            
-            # Verificar si la construcción existe
-            query_check = f"""
-                SELECT id FROM catastro.construcciones19 
+ 
+            existe = self.db.read(
+                sql=f"SELECT id FROM catastro.construcciones19 WHERE id = {id_construccion}",
+                multi=False
+            )
+ 
+            if not existe:
+                QMessageBox.warning(self, "Advertencia",
+                    "No se encontró la construcción para actualizar")
+                return
+ 
+            # Construir cláusulas opcionales
+            numbloque_sql       = f"numbloque = {datos['numbloque']},"       if datos.get('numbloque')       else ''
+            numconstruccion_sql = f"numconstruccion = {datos['numconstruccion']}," if datos.get('numconstruccion') else ''
+ 
+            query = f"""
+                UPDATE catastro.construcciones19 SET
+                    {numbloque_sql}
+                    {numconstruccion_sql}
+                    anyo              = '{datos['anyo']}',
+                    plantas           = {datos['plantas']},
+                    dormitorios       = {datos['dormitorios']},
+                    banyos            = {datos['banyos']},
+                    estadoconservacion = {datos['estadoconservacion']},
+                    uso               = {datos['uso']},
+                    tipoconstruccion  = {datos['tipoconstruccion']},
+                    revestimiento     = {datos['revestimiento']},
+                    ascensores        = {datos['ascensores']},
+                    calefaccion       = {datos['calefaccion']},
+                    aire              = {datos['aire']},
+                    sanitarios        = {datos['sanitarios']},
+                    escalera          = {datos['escalera']},
+                    lavanderia        = {datos['lavanderia']},
+                    tanque            = {datos['tanque']},
+                    servicio          = {datos['servicio']}
                 WHERE id = {id_construccion}
             """
-            existe = self.db.read(sql=query_check, multi=False)
-            
-            if existe:
-                # Actualizar construcción existente
-                query = f"""
-                    UPDATE catastro.construcciones19 SET
-                        anyo = '{datos['anyo']}',
-                        plantas = {datos['plantas']},
-                        dormitorios = {datos['dormitorios']},
-                        banyos = {datos['banyos']},
-                        estadoconservacion = {datos['estadoconservacion']},
-                        uso = {datos['uso']},
-                        tipoconstruccion = {datos['tipoconstruccion']},
-                        revestimiento = {datos['revestimiento']},
-                        ascensores = {datos['ascensores']},
-                        calefaccion = {datos['calefaccion']},
-                        aire = {datos['aire']},
-                        sanitarios = {datos['sanitarios']},
-                        escalera = {datos['escalera']},
-                        lavanderia = {datos['lavanderia']},
-                        tanque = {datos['tanque']},
-                        servicio = {datos['servicio']}
-                    WHERE id = {id_construccion}
-                """
-                self.db.create(sql=query)
-                mensaje = "Construcción actualizada correctamente"
-            else:
-                # No deberíamos llegar aquí ya que estamos editando una construcción existente
-                QMessageBox.warning(self, "Advertencia", "No se encontró la construcción para actualizar")
-                return
-            
-            QMessageBox.information(self, "Éxito", mensaje)
-            
-            # Actualizar plantas si ha cambiado el número
+            self.db.create(sql=query)
+ 
+            QMessageBox.information(self, "Éxito", "Construcción actualizada correctamente")
+ 
             self.actualizar_plantas_si_cambio(id_construccion, int(datos['plantas']))
-            
-            # Recargar la lista de construcciones
             self.cargar_construcciones_existentes()
-            
-            # Destacar la construcción actualizada
+            self.cargar_tabla_plantas(id_construccion)
             self.destacar_item_en_lista(id_construccion)
-            
+ 
         except Exception as e:
-            print(f"Error al guardar los datos: {str(e)}")
-            QMessageBox.critical(self, "Error", f"Error al guardar los datos: {str(e)}")
-
+            print(f"Error al guardar: {str(e)}")
+            QMessageBox.critical(self, "Error", f"Error al guardar: {str(e)}")
+ 
     def cargar_datos_construccion(self, item):
         """Cargar datos cuando se selecciona una construcción de la lista."""
         try:
-            # Extraer el ID de construcción del texto del item
             texto_item = item.text()
             if "ID:" not in texto_item:
                 return
-                
+ 
             id_construccion = texto_item.split('-')[0].replace('ID:', '').strip()
-            
-            # Consulta para obtener los datos principales
+ 
             query = f"""
                 SELECT * FROM catastro.construcciones19 
                 WHERE id = {id_construccion}
             """
             resultado = self.db.read(sql=query, multi=False)
-            
+ 
             if resultado:
-                # Almacenar el ID actual
                 self.construccion_id = id_construccion
-                
-                # Mostrar datos en el formulario
                 self.mostrar_datos_construccion(resultado)
-                
-                # Calcular y actualizar plantas
                 self.calcular_y_actualizar_num_plantas(id_construccion)
-                
-                # Identificar planta baja
                 self.identificar_planta_baja_y_ordenar(id_construccion)
-            
+                self.cargar_tabla_plantas(id_construccion)          # NUEVO
+ 
         except Exception as e:
             print(f"Error al cargar los datos: {str(e)}")
             QMessageBox.warning(self, "Error", f"Error al cargar los datos: {str(e)}")
-    
+ 
     def calcular_y_actualizar_num_plantas(self, id_construccion):
         """
         Calcula el número real de plantas basado en las construcciones_plantas19
         y actualiza el campo en el formulario.
         """
         try:
-            # Primero, obtener el código y bloque de esta construcción
             query_info = f"""
                 SELECT codigo, numbloque 
                 FROM catastro.construcciones19 
                 WHERE id = {id_construccion}
             """
             info = self.db.read(sql=query_info, multi=False)
-            
+ 
             if not info:
                 print(f"No se encontró información para la construcción ID: {id_construccion}")
                 return
-                
+ 
             codigo = info.get('codigo')
             bloque = info.get('numbloque')
-            
-            # Contar cuántas plantas existen en construcciones_plantas19
+ 
             query_count = f"""
                 SELECT COUNT(*) as num_plantas
                 FROM catastro.construcciones_plantas19
                 WHERE id_construccion = {id_construccion}
             """
             resultado = self.db.read(sql=query_count, multi=False)
-            
+ 
             plantas_registradas = 0
             if resultado and 'num_plantas' in resultado:
                 plantas_registradas = resultado['num_plantas']
-            
-            # Contar también cuántas construcciones existen con este código y bloque (enfoque alternativo)
+ 
             query_count_alt = f"""
                 SELECT COUNT(*) as num_plantas
                 FROM catastro.construcciones19
                 WHERE codigo = '{codigo}' AND numbloque = {bloque}
             """
             resultado_alt = self.db.read(sql=query_count_alt, multi=False)
-            
+ 
             plantas_calculadas = 0
             if resultado_alt and 'num_plantas' in resultado_alt:
                 plantas_calculadas = resultado_alt['num_plantas']
-            
-            # Determinar el número de plantas final (tomamos el máximo)
+ 
             num_plantas_final = max(plantas_registradas, plantas_calculadas)
-            
+ 
             if num_plantas_final > 0:
-                # Actualizar el campo en la interfaz
                 if hasattr(self, 'plantas'):
                     current_value = self.plantas.toPlainText().strip()
                     if current_value != str(num_plantas_final):
                         self.plantas.setPlainText(str(num_plantas_final))
                         print(f"Número de plantas actualizado automáticamente a {num_plantas_final}")
-                    
-                    # Si hay discrepancia, mostrar un mensaje
+ 
                     if plantas_registradas != plantas_calculadas and plantas_registradas > 0 and plantas_calculadas > 0:
                         QMessageBox.information(
-                            self, 
-                            "Información", 
-                            f"Nota: Se han encontrado {plantas_calculadas} construcciones con el mismo código y bloque, " +
-                            f"pero hay {plantas_registradas} plantas registradas en la tabla de plantas. " +
+                            self,
+                            "Información",
+                            f"Nota: Se han encontrado {plantas_calculadas} construcciones con el mismo código y bloque, "
+                            f"pero hay {plantas_registradas} plantas registradas en la tabla de plantas. "
                             f"Se ha usado el valor máximo ({num_plantas_final})."
                         )
-                
-                # Actualizar también en la base de datos
+ 
                 update_query = f"""
                     UPDATE catastro.construcciones19
                     SET plantas = {num_plantas_final}
@@ -1040,19 +1051,18 @@ class DialogoConstruccion(QDialog):
                 """
                 self.db.create(sql=update_query)
                 print(f"Base de datos actualizada con {num_plantas_final} plantas para ID {id_construccion}")
-                
+ 
         except Exception as e:
             print(f"Error al calcular el número de plantas: {str(e)}")
             import traceback
             traceback.print_exc()
-    
+ 
     def identificar_planta_baja_y_ordenar(self, id_construccion):
         """
-        Identifica la planta baja entre las plantas registradas y asegura 
+        Identifica la planta baja entre las plantas registradas y asegura
         que las plantas estén correctamente ordenadas (0, 1, 2, etc.)
         """
         try:
-            # Obtener todas las plantas de esta construcción
             query_plantas = f"""
                 SELECT id, id_planta, anyo, superficie
                 FROM catastro.construcciones_plantas19
@@ -1060,24 +1070,20 @@ class DialogoConstruccion(QDialog):
                 ORDER BY id_planta
             """
             plantas = self.db.read(sql=query_plantas, multi=True)
-            
+ 
             if not plantas:
                 print(f"No se encontraron plantas para la construcción ID: {id_construccion}")
                 return
-                
-            # Verificar si existe la planta baja (id_planta = 0)
+ 
             tiene_planta_baja = False
             for planta in plantas:
                 if planta.get('id_planta') == 0:
                     tiene_planta_baja = True
                     break
-            
-            # Si no hay planta baja, designar la primera planta como planta baja
+ 
             if not tiene_planta_baja and plantas:
-                # Obtener el ID de la primera planta
                 primera_planta_id = plantas[0].get('id')
-                
-                # Actualizar esta planta para que sea la planta baja
+ 
                 update_query = f"""
                     UPDATE catastro.construcciones_plantas19
                     SET id_planta = 0
@@ -1085,28 +1091,25 @@ class DialogoConstruccion(QDialog):
                 """
                 self.db.create(sql=update_query)
                 print(f"Se ha designado la planta con ID {primera_planta_id} como planta baja")
-                
-                # Reordenar las demás plantas
+ 
                 self.reordenar_plantas_consecutivas(id_construccion)
-                
-                # Mostrar mensaje
+ 
                 QMessageBox.information(
-                    self, 
-                    "Información", 
+                    self,
+                    "Información",
                     "Se ha identificado automáticamente la planta baja y reordenado las plantas."
                 )
-            
+ 
         except Exception as e:
             print(f"Error al identificar planta baja: {str(e)}")
             import traceback
             traceback.print_exc()
-    
+ 
     def reordenar_plantas_consecutivas(self, id_construccion):
         """
         Asegura que las plantas estén numeradas consecutivamente (0, 1, 2, etc.)
         """
         try:
-            # Obtener todas las plantas actuales ordenadas por id_planta
             query_plantas = f"""
                 SELECT id, id_planta
                 FROM catastro.construcciones_plantas19
@@ -1114,16 +1117,14 @@ class DialogoConstruccion(QDialog):
                 ORDER BY id_planta
             """
             plantas = self.db.read(sql=query_plantas, multi=True)
-            
+ 
             if not plantas:
                 return
-                
-            # Verificar si las plantas están ordenadas correctamente
+ 
             esperado = 0
             for planta in plantas:
                 planta_actual = planta.get('id_planta')
-                
-                # Si hay un salto en la numeración, corregirlo
+ 
                 if planta_actual != esperado:
                     update_query = f"""
                         UPDATE catastro.construcciones_plantas19
@@ -1132,74 +1133,58 @@ class DialogoConstruccion(QDialog):
                     """
                     self.db.create(sql=update_query)
                     print(f"Planta con ID {planta.get('id')} reordenada de {planta_actual} a {esperado}")
-                
+ 
                 esperado += 1
-                
+ 
         except Exception as e:
             print(f"Error al reordenar plantas: {str(e)}")
             import traceback
             traceback.print_exc()
-    
+ 
     def actualizar_plantas_si_cambio(self, id_construccion, nuevo_num_plantas):
         """
         Actualiza las plantas si el número ha cambiado.
-        
-        Args:
-            id_construccion (int): ID de la construcción.
-            nuevo_num_plantas (int): Nuevo número de plantas.
         """
         try:
-            # Obtener el número actual de plantas registradas
             query_count = f"""
                 SELECT COUNT(*) as num_plantas
                 FROM catastro.construcciones_plantas19
                 WHERE id_construccion = {id_construccion}
             """
             resultado = self.db.read(sql=query_count, multi=False)
-            
+ 
             if resultado and 'num_plantas' in resultado:
                 plantas_actuales = resultado['num_plantas']
-                
-                # Si el número ha aumentado, crear las plantas adicionales
+ 
                 if nuevo_num_plantas > plantas_actuales:
-                    # Obtener datos de la construcción para las nuevas plantas
                     query_construccion = f"""
                         SELECT anyo, superficie, geom
                         FROM catastro.construcciones19
                         WHERE id = {id_construccion}
                     """
                     datos_construccion = self.db.read(sql=query_construccion, multi=False)
-                    
+ 
                     if datos_construccion:
                         anyo = datos_construccion.get('anyo', '0')
                         superficie = datos_construccion.get('superficie', 0)
-                        
-                        # Crear plantas nuevas (empezando desde el número actual)
+ 
                         for i in range(plantas_actuales, nuevo_num_plantas):
-                            # Obtener el siguiente ID disponible
                             sql_ultimo_id = "SELECT COALESCE(MAX(id), 0) + 1 AS proximo_id FROM catastro.construcciones_plantas19"
                             resultado_id = self.db.read(sql=sql_ultimo_id, multi=False)
                             proximo_id = resultado_id.get('proximo_id', 1)
-                            
-                            # Determinar el id_planta (número de planta)
-                            # Si i=0 y no hay planta baja, crear planta baja
-                            # Si no, asignar id_planta correlativo
+ 
                             if i == 0:
-                                # Verificar si ya existe planta baja
                                 check_planta_baja = f"""
                                     SELECT id FROM catastro.construcciones_plantas19
                                     WHERE id_construccion = {id_construccion} AND id_planta = 0
                                 """
                                 tiene_planta_baja = self.db.read(sql=check_planta_baja, multi=False)
-                                
                                 if tiene_planta_baja:
-                                    continue  # Ya existe la planta baja
-                                
-                                id_planta = 0  # Planta baja
+                                    continue
+                                id_planta = 0
                             else:
                                 id_planta = i
-                            
-                            # Insertar la nueva planta
+ 
                             insert_query = f"""
                                 INSERT INTO catastro.construcciones_plantas19 
                                 (id, id_construccion, id_planta, anyo, superficie, geom)
@@ -1215,30 +1200,26 @@ class DialogoConstruccion(QDialog):
                             """
                             self.db.create(sql=insert_query)
                             print(f"Planta {id_planta} creada para construcción ID: {id_construccion}")
-                        
-                        # Mensaje informativo
+ 
                         plantas_creadas = nuevo_num_plantas - plantas_actuales
                         if plantas_creadas > 0:
                             QMessageBox.information(
-                                self, 
-                                "Información", 
+                                self,
+                                "Información",
                                 f"Se han creado {plantas_creadas} nuevas plantas automáticamente."
                             )
-                
-                # Si el número ha disminuido, eliminar plantas sobrantes
+ 
                 elif nuevo_num_plantas < plantas_actuales:
-                    # Confirmar con el usuario
                     respuesta = QMessageBox.question(
                         self,
                         "Confirmación",
-                        f"El número de plantas ha disminuido de {plantas_actuales} a {nuevo_num_plantas}. " +
+                        f"El número de plantas ha disminuido de {plantas_actuales} a {nuevo_num_plantas}. "
                         f"¿Desea eliminar las plantas sobrantes?",
                         QMessageBox.Yes | QMessageBox.No,
                         QMessageBox.No
                     )
-                    
+ 
                     if respuesta == QMessageBox.Yes:
-                        # Obtener las plantas ordenadas por id_planta (ascendente)
                         query_plantas = f"""
                             SELECT id, id_planta
                             FROM catastro.construcciones_plantas19
@@ -1246,18 +1227,13 @@ class DialogoConstruccion(QDialog):
                             ORDER BY id_planta
                         """
                         plantas = self.db.read(sql=query_plantas, multi=True)
-                        
-                        # Eliminar plantas por encima del nuevo límite
-                        # Conservamos la planta baja (id_planta=0) y tantas plantas como especificado
+ 
                         plantas_a_conservar = nuevo_num_plantas
                         plantas_eliminadas = 0
-                        
+ 
                         for i, planta in enumerate(plantas):
-                            # Si es la planta baja, la conservamos
                             if planta.get('id_planta') == 0:
                                 continue
-                                
-                            # Si ya hemos conservado suficientes plantas, eliminamos
                             if i >= plantas_a_conservar:
                                 delete_query = f"""
                                     DELETE FROM catastro.construcciones_plantas19
@@ -1265,18 +1241,249 @@ class DialogoConstruccion(QDialog):
                                 """
                                 self.db.create(sql=delete_query)
                                 plantas_eliminadas += 1
-                        
+ 
                         if plantas_eliminadas > 0:
                             QMessageBox.information(
-                                self, 
-                                "Información", 
+                                self,
+                                "Información",
                                 f"Se han eliminado {plantas_eliminadas} plantas sobrantes."
                             )
-                
+ 
         except Exception as e:
             print(f"Error al actualizar plantas: {str(e)}")
             import traceback
             traceback.print_exc()
+ 
+    # ══════════════════════════════════════════════════════════════════════════
+    # MÉTODOS NUEVOS — Gestión directa desde table_plantas
+    # ══════════════════════════════════════════════════════════════════════════
+ 
+    def cargar_tabla_plantas(self, id_construccion):
+        """Carga todas las plantas de la construcción en table_plantas."""
+        try:
+            if not hasattr(self, 'table_plantas'):
+                return
+            plantas = self.db.read(
+                sql=f"""SELECT id, id_planta, anyo, superficie
+                        FROM catastro.construcciones_plantas19
+                        WHERE id_construccion = {id_construccion}
+                        ORDER BY id_planta""",
+                multi=True
+            )
+            from qgis.PyQt.QtWidgets import QTableWidgetItem
+            self.table_plantas.setRowCount(0)
+            for planta in plantas:
+                row = self.table_plantas.rowCount()
+                self.table_plantas.insertRow(row)
+                self.table_plantas.setItem(row, 0, QTableWidgetItem(str(planta.get('id', ''))))
+                self.table_plantas.setItem(row, 1, QTableWidgetItem(str(planta.get('id_planta', ''))))
+                self.table_plantas.setItem(row, 2, QTableWidgetItem(str(planta.get('anyo', ''))))
+                self.table_plantas.setItem(row, 3, QTableWidgetItem(str(planta.get('superficie', ''))))
+            self.table_plantas.resizeColumnsToContents()
+        except Exception as e:
+            print(f"Error al cargar tabla de plantas: {str(e)}")
+ 
+    def cargar_planta_en_panel(self, item):
+        """Al hacer click en una fila, carga sus datos en el panel de edición."""
+        try:
+            row = item.row()
+            self.txt_planta_numero.setPlainText(self.table_plantas.item(row, 1).text())
+            self.txt_planta_anyo.setPlainText(self.table_plantas.item(row, 2).text())
+            self.txt_planta_superficie.setPlainText(self.table_plantas.item(row, 3).text())
+        except Exception as e:
+            print(f"Error al cargar planta en panel: {str(e)}")
+ 
+    def agregar_planta(self):
+        """Inserta una nueva planta para la construcción activa desde el panel."""
+        if not self.construccion_id:
+            QMessageBox.warning(self, "Advertencia", "Seleccione primero una construcción")
+            return
+        try:
+            numero = self.txt_planta_numero.toPlainText().strip()
+            anyo   = self.txt_planta_anyo.toPlainText().strip()
+            sup    = self.txt_planta_superficie.toPlainText().strip()
+ 
+            if not numero.isdigit():
+                QMessageBox.warning(self, "Validación",
+                    "El N° de planta debe ser numérico (0 = Planta Baja)")
+                return
+ 
+            existe = self.db.read(
+                sql=f"""SELECT id FROM catastro.construcciones_plantas19
+                        WHERE id_construccion = {self.construccion_id}
+                        AND id_planta = {numero}""",
+                multi=False
+            )
+            if existe:
+                QMessageBox.warning(self, "Advertencia",
+                    f"La planta {numero} ya existe para esta construcción")
+                return
+ 
+            proximo_id = self.db.read(
+                sql="SELECT COALESCE(MAX(id), 0) + 1 AS proximo_id FROM catastro.construcciones_plantas19",
+                multi=False
+            ).get('proximo_id', 1)
+ 
+            self.db.create(sql=f"""
+                INSERT INTO catastro.construcciones_plantas19
+                    (id, id_construccion, id_planta, anyo, superficie, geom)
+                SELECT {proximo_id}, {self.construccion_id}, {numero},
+                       '{anyo}', {sup if sup else 0}, geom
+                FROM catastro.construcciones19
+                WHERE id = {self.construccion_id}
+            """)
+            print(f"Planta {numero} agregada para construcción ID: {self.construccion_id}")
+            self.cargar_tabla_plantas(self.construccion_id)
+            self.calcular_y_actualizar_num_plantas(self.construccion_id)
+            self.txt_planta_numero.clear()
+            self.txt_planta_anyo.clear()
+            self.txt_planta_superficie.clear()
+ 
+        except Exception as e:
+            print(f"Error al agregar planta: {str(e)}")
+            QMessageBox.critical(self, "Error", f"Error al agregar planta: {str(e)}")
+ 
+    def actualizar_planta_seleccionada(self):
+        """Actualiza año y superficie de la planta seleccionada en la tabla."""
+        if not hasattr(self, 'table_plantas'):
+            return
+        if not self.table_plantas.selectedItems():
+            QMessageBox.warning(self, "Advertencia", "Seleccione una planta en la tabla")
+            return
+        try:
+            row    = self.table_plantas.currentRow()
+            id_row = self.table_plantas.item(row, 0).text()
+            anyo   = self.txt_planta_anyo.toPlainText().strip()
+            sup    = self.txt_planta_superficie.toPlainText().strip()
+ 
+            self.db.create(sql=f"""
+                UPDATE catastro.construcciones_plantas19
+                SET anyo = '{anyo}',
+                    superficie = {sup if sup else 0}
+                WHERE id = {id_row}
+            """)
+            print(f"Planta ID {id_row} actualizada")
+            self.cargar_tabla_plantas(self.construccion_id)
+ 
+        except Exception as e:
+            print(f"Error al actualizar planta: {str(e)}")
+            QMessageBox.critical(self, "Error", f"Error al actualizar planta: {str(e)}")
+ 
+    def eliminar_planta_seleccionada(self):
+        """Elimina la planta cuya fila está seleccionada en la tabla."""
+        if not hasattr(self, 'table_plantas'):
+            return
+        if not self.table_plantas.selectedItems():
+            QMessageBox.warning(self, "Advertencia", "Seleccione una planta en la tabla")
+            return
+        try:
+            row     = self.table_plantas.currentRow()
+            id_row  = self.table_plantas.item(row, 0).text()
+            num_row = self.table_plantas.item(row, 1).text()
+ 
+            if QMessageBox.question(
+                self, "Confirmar",
+                f"¿Eliminar la planta {num_row}?",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No
+            ) == QMessageBox.Yes:
+                self.db.create(
+                    sql=f"DELETE FROM catastro.construcciones_plantas19 WHERE id = {id_row}"
+                )
+                print(f"Planta ID {id_row} eliminada")
+                self.cargar_tabla_plantas(self.construccion_id)
+                self.calcular_y_actualizar_num_plantas(self.construccion_id)
+ 
+        except Exception as e:
+            print(f"Error al eliminar planta: {str(e)}")
+            QMessageBox.critical(self, "Error", f"Error al eliminar planta: {str(e)}")
+            
+    def seleccionar_construccion_y_resaltar(self, item):
+        """
+        Al hacer click en la lista:
+          1. Carga los datos en el formulario (comportamiento original)
+          2. Resalta el polígono correspondiente en el mapa QGIS
+          3. Hace zoom al polígono para ubicarlo visualmente
+        """
+        # Comportamiento original — cargar datos en formulario
+        self.cargar_datos_construccion(item)
+ 
+        # Nuevo — resaltar en mapa
+        try:
+            texto = item.text()
+            if "ID:" not in texto:
+                return
+            id_construccion = int(texto.split('-')[0].replace('ID:', '').strip())
+            self.resaltar_en_mapa(id_construccion)
+        except Exception as e:
+            print(f"Error al resaltar en mapa: {str(e)}")
+ 
+ 
+    def resaltar_en_mapa(self, id_construccion):
+        """
+        Busca la capa de construcciones en QGIS, selecciona el feature
+        correspondiente al id_construccion y hace zoom a él.
+        """
+        try:
+            from qgis.core import QgsProject
+            from qgis.utils import iface
+ 
+            # Buscar la capa de construcciones (acepta cualquier nombre que contenga 'construccion')
+            capa_construccion = None
+            for layer in QgsProject.instance().mapLayers().values():
+                if 'construccion' in layer.name().lower():
+                    capa_construccion = layer
+                    break
+ 
+            if not capa_construccion:
+                print("No se encontró la capa de construcciones en el proyecto")
+                return
+ 
+            # Limpiar selección previa
+            capa_construccion.removeSelection()
+ 
+            # Seleccionar el feature por ID
+            capa_construccion.selectByExpression(f'"id" = {id_construccion}')
+ 
+            features_sel = capa_construccion.selectedFeatures()
+            if not features_sel:
+                print(f"No se encontró el feature con id={id_construccion} en la capa")
+                return
+ 
+            # Hacer zoom al feature seleccionado con margen
+            box = features_sel[0].geometry().boundingBox()
+            box.grow(10)  # margen de 10 unidades alrededor del polígono
+            iface.mapCanvas().setExtent(box)
+            iface.mapCanvas().refresh()
+ 
+            print(f"Feature id={id_construccion} resaltado y centrado en el mapa")
+ 
+        except Exception as e:
+            print(f"Error en resaltar_en_mapa: {str(e)}")
+            import traceback
+            traceback.print_exc()
+ 
+ 
+    def limpiar_seleccion_mapa(self):
+        """
+        Limpia la selección en la capa de construcciones al cerrar el diálogo.
+        Llamar desde closeEvent o desde btn_cerrar.
+        """
+        try:
+            from qgis.core import QgsProject
+            for layer in QgsProject.instance().mapLayers().values():
+                if 'construccion' in layer.name().lower():
+                    layer.removeSelection()
+                    break
+        except Exception as e:
+            print(f"Error al limpiar selección: {str(e)}")
+ 
+ 
+    def closeEvent(self, event):
+        """
+        Al cerrar el diálogo limpia automáticamente la selección en el mapa.
+        """
+        self.limpiar_seleccion_mapa()
+        super(DialogoConstruccion, self).closeEvent(event)
 
 
     
@@ -1285,7 +1492,7 @@ class ColegioRiberalta:
 
     def __init__(self, iface):
 
-        self.ortofoto  = r'D:\PROYECTO CHALLAPATA\ZONIFICACION_2024\ortofoto\ortofotoChalla.ecw' #! PATH ORTOFOTO
+        self.ortofoto  = r'F:\PROYECTO CHALLAPATA\ZONIFICACION_2024\ortofoto\ortofotoChalla.ecw' #! PATH ORTOFOTO
         
         # Save reference to the QGIS interface
         self.iface = iface
@@ -1310,6 +1517,7 @@ class ColegioRiberalta:
             self.dlg_export_feature_construccion = ExportDatabaseFeatureConstruccion()
             self.dlg_export_plantas = ExportPlantas()  # Cambiado de ExportDatabasePlantas
             self.dlg_listar_construccion_plantas = ListarConstruccionPlantas()
+            self.dlg_gestion_construccion = None
             print("Diálogos inicializados correctamente")
         except Exception as e:
             print(f"Error al inicializar diálogos: {str(e)}")
@@ -1329,6 +1537,14 @@ class ColegioRiberalta:
         for action in self.actions:
             self.iface.removePluginMenu('&Colegio Riberalta',action)
             self.iface.removeToolBarIcon(action)
+
+        if self.dlg_ot is not None:
+            try:
+                self.iface.removeDockWidget(self.dlg_ot)
+                self.dlg_ot.close()
+                self.dlg_ot = None
+            except:
+                pass
 
    
     def add_action(self, icon_path, text, callback, add_to_menu=True, add_to_toolbar=True, status_tip=None, whats_this=None, parent=None):
@@ -1350,6 +1566,16 @@ class ColegioRiberalta:
         self.actions.append(action)
 
         return action
+    
+    def get_geoserver_config(self):
+        """Obtiene configuración de GeoServer"""
+        return {
+            'url': 'http://192.168.1.250:8080/geoserver',
+            'workspace': 'challapata',
+            'ortofoto_layer': 'challapata:challa.tif',
+            'ortofoto_crs': 'EPSG:32720',
+            'ortofoto_format': 'image/png'
+        }
         
     def guardar_co_titular(self):
         """
@@ -1592,10 +1818,10 @@ class ColegioRiberalta:
             callback=self.abrir_busqueda,
             parent=self.iface.mainWindow())
         
-        icon_path = self.plugin_dir + "/icon/search.png"
+        icon_path = self.plugin_dir + "/icon/order.png"
         self.add_action(
         icon_path,
-            text='Buscar Lotes',
+            text='Ordenes de Trabajo',
         callback=self.abrir_ordenesTrabajo,
         parent=self.iface.mainWindow())
 
@@ -1628,6 +1854,13 @@ class ColegioRiberalta:
             icon_path,
             text= 'Carga Construcción desde Interfaz',
             callback=self.abrir_dialogo_guardarfeature_construccion,
+            parent=self.iface.mainWindow())
+
+        icon_path = self.plugin_dir + "/icon/construccion.png"
+        self.add_action(
+            icon_path,
+            text= 'Modifica y Agrega Plantas desde Interfaz',
+            callback=self.abrir_gestion_construccion,
             parent=self.iface.mainWindow())
             
         icon_path = self.plugin_dir + "/icon/cement.png"
@@ -1715,6 +1948,13 @@ class ColegioRiberalta:
             text= 'Zonificacion',
             callback=self.abrir_dialogo_guardar_zonas,
             parent=self.iface.mainWindow())
+        
+        icon_path = self.plugin_dir + "/icon/vista_general.png"  # Reutilizar ícono existente o crear uno nuevo
+        self.add_action(
+            icon_path,
+            text='Vista General',
+            callback=self.cargar_vista_general,
+            parent=self.iface.mainWindow())
 
                        
         self.dlg_export_feature_construccion = ExportDatabaseFeatureConstruccion()
@@ -1737,7 +1977,13 @@ class ColegioRiberalta:
         self.first_start = True
 
         self.dlg_busqueda = CatastroWidget()
-        self.dlg_ot = OrdenesTrabajo()
+
+        self.dlg_ot = None
+        # self.iface.addDockWidget(QtCore.Qt.RightDockWidgetArea, self.dlg_ot)
+
+        # self.dlg_ot.setFloating(False)  # Anclado, no flotante
+        # self.dlg_ot.setAllowedAreas(QtCore.Qt.LeftDockWidgetArea | QtCore.Qt.RightDockWidgetArea)
+
         self.dlg_ejes_viales = EjesVialesWidget()
         
         self.dlg = ColegioRiberaltaDialog()
@@ -2425,15 +2671,40 @@ class ColegioRiberalta:
         self.dlg_busqueda.show()
         self.dlg_busqueda.search()
 
-    def abrir_ordenesTrabajo(self):
-        self.iface.addDockWidget(Qt.LeftDockWidgetArea, self.dlg_ot)
-        self.dlg_ot.setAllowedAreas(Qt.AllDockWidgetAreas)
-        self.dlg_ot.show()
-        self.dlg_ot.search()
-
-
     def cerrar_busqueda(self):
         self.dlg_busqueda.close()
+
+    def abrir_ordenesTrabajo(self):
+        """Abrir sistema de órdenes de trabajo en panel derecho"""
+        try:
+            # Crear el diálogo solo la primera vez
+            if self.dlg_ot is None:
+                self.dlg_ot = OrdenesTrabajo()
+                
+                # Posicionar en el lado DERECHO
+                self.iface.addDockWidget(Qt.RightDockWidgetArea, self.dlg_ot)
+                
+                # Configurar propiedades del dock
+                self.dlg_ot.setFloating(False)  # Anclado, no flotante
+                self.dlg_ot.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea)
+            
+            # Si ya existe, solo mostrarlo/ocultarlo
+            if self.dlg_ot.isVisible():
+                self.dlg_ot.hide()
+            else:
+                # Asegurar que esté en el lado derecho
+                self.iface.addDockWidget(Qt.RightDockWidgetArea, self.dlg_ot)
+                self.dlg_ot.show()
+                
+        except Exception as e:
+            from PyQt5.QtWidgets import QMessageBox
+            QMessageBox.critical(None, "Error", f"Error abriendo órdenes de trabajo: {str(e)}")
+
+
+    def cerrar_ordenesTrabajo(self):
+        """Cerrar sistema de órdenes de trabajo"""
+        if self.dlg_ot is not None:
+            self.dlg_ot.hide()
 
     def abrir_dialogo_titular(self):
         self.dlg_export_titular.show()
@@ -3984,113 +4255,88 @@ class ColegioRiberalta:
     ############################################################################################################################################   
 
 
-    def setup_search():
-        # Conectar el evento textChanged del QLineEdit con la función de filtrado
+    def setup_search(self):
+        # FIX: faltaba 'self' en el parámetro
         self.searchBox.textChanged.connect(self.filter_list)
-
+ 
     def filter_list(self, text):
-        # Ocultar todos los items
         for i in range(self.list_bbdd.count()):
             item = self.list_bbdd.item(i)
             item.setHidden(text.lower() not in item.text().lower())
-    #Selecciona Construccion
-    
-    def selecciona_construccion(self):    
+ 
+    # Selecciona Construccion
+    def selecciona_construccion(self):
         try:
-            # Verificar si hay una capa activa
             layer = iface.activeLayer()
             if not layer:
                 self.driver.showMessage('No hay una capa activa', 1, 15)
                 return
-                
-            # Verificar si hay features seleccionadas
+ 
             features = layer.selectedFeatures()
             if not features:
                 self.driver.showMessage('Por favor seleccione una construcción', 1, 15)
                 return
-            
-            # Obtener la geometría
-            geometria = features[0].geometry()
+ 
+            geometria    = features[0].geometry()
             geometriaWkt = features[0].geometry().asWkt()
-            srid = layer.crs().authid()[5:]
-                    
-            # Obtener los puntos de la geometría
-            n = 0
-            ver = geometria.vertexAt(0)
-            puntos = []
-            
+            srid         = layer.crs().authid()[5:]
+ 
+            n, ver, puntos = 0, geometria.vertexAt(0), []
             while(ver.isEmpty() != True):
                 ver = geometria.vertexAt(n)
                 n += 1
-                ver_xy = QgsPointXY(ver)
-                puntos.append(ver_xy)
-            
+                puntos.append(QgsPointXY(ver))
             puntos.pop()
-            
+ 
             listPointsToExport = []
             for point in puntos:
                 listPointsToExport.append([point.x(), point.y()])
-            
-            # Verificar la selección en la lista
+ 
             list_widget = self.dlg_export_feature_construccion.list_bbdd
-            current = list_widget.currentItem()
+            current     = list_widget.currentItem()
             if not current:
                 self.driver.showMessage('Por favor seleccione un elemento de la lista', 1, 15)
                 return
-            
-            # Obtener y verificar los valores de los campos
-            cod = self.dlg_export_feature_construccion.cod
+ 
+            cod       = self.dlg_export_feature_construccion.cod
             valor_cod = cod.toPlainText()
             if not valor_cod:
                 self.driver.showMessage('El campo código es obligatorio', 1, 15)
                 return
-            
-            currentText = current.text()
+ 
+            currentText      = current.text()
             currentTextSplit = currentText.split()
             if not currentTextSplit:
                 self.driver.showMessage('El texto seleccionado no tiene el formato esperado', 1, 15)
                 return
-                
+ 
             currentTextSplitCodigo = currentTextSplit[0]
-            
-            # Calcular área
-            cur_area = features[0].geometry().area()
-            
-            # Obtener valores de los campos
-            anyo = self.dlg_export_feature_construccion.anyo
-            valor_anyo = anyo.toPlainText() or '0'  # Valor por defecto si está vacío
-            
-            plantas = self.dlg_export_feature_construccion.plantas
-            valor_plantas = plantas.toPlainText() or '0'
-            
-            dorm = self.dlg_export_feature_construccion.dormitorios
-            valor_dorm = dorm.toPlainText() or '0'
-            
-            banyos = self.dlg_export_feature_construccion.banyos
-            valor_banyos = banyos.toPlainText() or '0'
-            
-            # Obtener índices de los combobox
-            conservacion = self.dlg_export_feature_construccion.comboBox_conservacion.currentIndex()           
-            uso = self.dlg_export_feature_construccion.comboBox_uso.currentIndex()
-            tipo = self.dlg_export_feature_construccion.comboBox_tipo.currentIndex()       
+            cur_area               = features[0].geometry().area()
+ 
+            valor_anyo    = self.dlg_export_feature_construccion.anyo.toPlainText()    or '0'
+            valor_plantas = self.dlg_export_feature_construccion.plantas.toPlainText() or '0'
+            valor_dorm    = self.dlg_export_feature_construccion.dormitorios.toPlainText() or '0'
+            valor_banyos  = self.dlg_export_feature_construccion.banyos.toPlainText()  or '0'
+ 
+            conservacion  = self.dlg_export_feature_construccion.comboBox_conservacion.currentIndex()
+            uso           = self.dlg_export_feature_construccion.comboBox_uso.currentIndex()
+            tipo          = self.dlg_export_feature_construccion.comboBox_tipo.currentIndex()
             revestimiento = self.dlg_export_feature_construccion.comboBox_revestimiento.currentIndex()
-            
-            # Obtener estados de los checkboxes
-            ascensor = self.dlg_export_feature_construccion.checkBox_ascensor.isChecked()
+ 
+            ascensor    = self.dlg_export_feature_construccion.checkBox_ascensor.isChecked()
             calefaccion = self.dlg_export_feature_construccion.checkBox_calefaccion.isChecked()
-            sanitarios = self.dlg_export_feature_construccion.checkBox_sanitarios.isChecked()
-            escalera = self.dlg_export_feature_construccion.checkBox_escalera.isChecked()
-            aire = self.dlg_export_feature_construccion.checkBox_aire.isChecked()
-            lavanderia = self.dlg_export_feature_construccion.checkBox_lavandera.isChecked()
-            agua = self.dlg_export_feature_construccion.checkBox_agua.isChecked()
-            area = self.dlg_export_feature_construccion.checkBox_area.isChecked()
-            
-            # MODIFICACIÓN: Generar un ID único para la construcción
-            # Consultar el último ID usado y sumar 1
+            sanitarios  = self.dlg_export_feature_construccion.checkBox_sanitarios.isChecked()
+            escalera    = self.dlg_export_feature_construccion.checkBox_escalera.isChecked()
+            aire        = self.dlg_export_feature_construccion.checkBox_aire.isChecked()
+            lavanderia  = self.dlg_export_feature_construccion.checkBox_lavandera.isChecked()
+            agua        = self.dlg_export_feature_construccion.checkBox_agua.isChecked()
+            area        = self.dlg_export_feature_construccion.checkBox_area.isChecked()
+ 
+            # ── Próximo ID de construcción ────────────────────────────────────
             sql_ultimo_id = "SELECT MAX(id) AS ultimo_id FROM catastro.construcciones19"
             resultado_ultimo_id = self.driver.read(sql=sql_ultimo_id, multi=False)
-            
-            ultimo_id = 1  # Valor por defecto
+ 
+            ultimo_id = 1
             if resultado_ultimo_id:
                 if isinstance(resultado_ultimo_id, dict) and 'ultimo_id' in resultado_ultimo_id:
                     ultimo_id = resultado_ultimo_id['ultimo_id'] + 1
@@ -4099,42 +4345,65 @@ class ColegioRiberalta:
                 elif isinstance(resultado_ultimo_id, (list, tuple)) and resultado_ultimo_id[0] is not None:
                     ultimo_id = int(resultado_ultimo_id[0]) + 1
                 else:
-                    # Intentar acceder como si fuera un objeto con índice
                     try:
-                        valor = resultado_ultimo_id[0]
-                        if valor is not None:
-                            ultimo_id = int(valor) + 1
+                        v = resultado_ultimo_id[0]
+                        if v is not None:
+                            ultimo_id = int(v) + 1
                     except:
                         ultimo_id = 1
-            
-            print(f"Usando nuevo ID para construcción: {ultimo_id}")
-            
-            # Guardar el ID de la construcción como atributo de la clase
+ 
+            # ── NUEVO: Calcular numconstruccion ──────────────────────────────
+            # Cuenta cuántas construcciones existen ya en este codigo+bloque
+            # y asigna el siguiente número
+            sql_num_construccion = f"""
+                SELECT COALESCE(MAX(numconstruccion), 0) + 1 AS proximo
+                FROM catastro.construcciones19
+                WHERE codigo = '{currentTextSplitCodigo}'
+                AND numbloque = {valor_cod}
+            """
+            resultado_nc = self.driver.read(sql=sql_num_construccion, multi=False)
+            num_construccion = 1
+            if resultado_nc:
+                if isinstance(resultado_nc, dict) and 'proximo' in resultado_nc:
+                    num_construccion = resultado_nc.get('proximo', 1) or 1
+                else:
+                    try:
+                        num_construccion = int(resultado_nc[0]) or 1
+                    except:
+                        num_construccion = 1
+ 
+            print(f"Usando nuevo ID: {ultimo_id} | numconstruccion: {num_construccion}")
             self.ultimo_construccion_id = ultimo_id
-            
-            # Construir y ejecutar SQL con ID explícito
-            sql = f''' INSERT INTO catastro.construcciones19
-            (id, numbloque, codigo, plantas, anyo, estadoconservacion, uso, superficie, dormitorios, banyos, revestimiento, ascensores, calefaccion, aire, escalera, tanque, lavanderia, servicio, sanitarios, tipoconstruccion, geom)
-            VALUES({ultimo_id}, {valor_cod}, '{currentTextSplitCodigo}', {valor_plantas}, '{valor_anyo}', {conservacion}, {uso}, {cur_area}, {valor_dorm}, {valor_banyos}, {revestimiento}, {ascensor}, {calefaccion}, {aire}, {escalera}, {agua}, {lavanderia}, {area}, {sanitarios}, {tipo}, st_multi(st_force2d(st_transform(st_geomfromtext('{geometriaWkt}',{srid}),32719))));
-            '''
-
+ 
+            # ── INSERT con numconstruccion ────────────────────────────────────
+            sql = f'''INSERT INTO catastro.construcciones19
+            (id, numbloque, numconstruccion, codigo, plantas, anyo,
+             estadoconservacion, uso, superficie, dormitorios, banyos,
+             revestimiento, ascensores, calefaccion, aire, escalera,
+             tanque, lavanderia, servicio, sanitarios, tipoconstruccion, geom)
+            VALUES(
+                {ultimo_id}, {valor_cod}, {num_construccion},
+                '{currentTextSplitCodigo}', {valor_plantas}, '{valor_anyo}',
+                {conservacion}, {uso}, {cur_area}, {valor_dorm}, {valor_banyos},
+                {revestimiento}, {ascensor}, {calefaccion}, {aire}, {escalera},
+                {agua}, {lavanderia}, {area}, {sanitarios}, {tipo},
+                st_multi(st_force2d(st_transform(
+                    st_geomfromtext('{geometriaWkt}',{srid}),32719)))
+            );'''
+ 
             self.driver.create(sql=sql)
-            print(f"Construcción guardada con ID: {ultimo_id}")
-            
-            # Limpiar campos después de la inserción exitosa
+            print(f"Construcción guardada con ID: {ultimo_id}, Construcción #{num_construccion} del bloque {valor_cod}")
+ 
+            # Limpiar campos
             self.dlg_export_feature_construccion.cod.clear()
-            self.dlg_export_feature_construccion.anyo.clear()      
-            self.dlg_export_feature_construccion.plantas.clear()       
+            self.dlg_export_feature_construccion.anyo.clear()
+            self.dlg_export_feature_construccion.plantas.clear()
             self.dlg_export_feature_construccion.dormitorios.clear()
-            self.dlg_export_feature_construccion.banyos.clear()           
-            
-            # Resetear comboboxes
-            self.dlg_export_feature_construccion.comboBox_conservacion.setCurrentIndex(0)        
+            self.dlg_export_feature_construccion.banyos.clear()
+            self.dlg_export_feature_construccion.comboBox_conservacion.setCurrentIndex(0)
             self.dlg_export_feature_construccion.comboBox_uso.setCurrentIndex(0)
-            self.dlg_export_feature_construccion.comboBox_tipo.setCurrentIndex(0)   
+            self.dlg_export_feature_construccion.comboBox_tipo.setCurrentIndex(0)
             self.dlg_export_feature_construccion.comboBox_revestimiento.setCurrentIndex(0)
-            
-            # Desmarcar checkboxes
             self.dlg_export_feature_construccion.checkBox_ascensor.setChecked(False)
             self.dlg_export_feature_construccion.checkBox_calefaccion.setChecked(False)
             self.dlg_export_feature_construccion.checkBox_sanitarios.setChecked(False)
@@ -4143,98 +4412,95 @@ class ColegioRiberalta:
             self.dlg_export_feature_construccion.checkBox_lavandera.setChecked(False)
             self.dlg_export_feature_construccion.checkBox_agua.setChecked(False)
             self.dlg_export_feature_construccion.checkBox_area.setChecked(False)
-            
+ 
             self.driver.showMessage('Construcción guardada exitosamente', 0, 3)
-            
-            # Crear plantas automáticamente
+ 
             self.crear_plantas_construccion(ultimo_id, valor_plantas, valor_anyo, cur_area)
-            
-            # NUEVO: Cerrar el diálogo actual y abrir DialogoConstruccion con el ID
             self.dlg_export_feature_construccion.close()
             self.abrir_dialogo_construccion(ultimo_id)
-            
+ 
         except Exception as ex:
             print(f"Error en selecciona_construccion: {str(ex)}")
             self.driver.showMessage(f'Error al seleccionar: {str(ex)}', 1, 15)
-
-
+ 
+ 
     def abrir_dialogo_construccion(self, construccion_id):
         """
-        Abre el diálogo DialogoConstruccion para modificar una construcción existente
-        y gestionar sus plantas.
-        
-        Args:
-            construccion_id (int): ID de la construcción a modificar.
+        Abre DialogoConstruccion tras guardar una construcción nueva.
+        FIX: eliminado import relativo — DialogoConstruccion viene de
+             colegio_riberalta_dialog a través del import del archivo.
         """
         try:
-            # Importar la clase DialogoConstruccion si no está disponible
-            # Esto permite mantener la separación de código
-            if not hasattr(self, 'DialogoConstruccion'):
-                from .dialogo_construccion import DialogoConstruccion
-            
-            # Crear una instancia del diálogo pasando el ID de la construcción
-            dialogo = DialogoConstruccion(iface=self.iface, parent=self.iface.mainWindow(), construccion_id=construccion_id)
-            
-            # Mostrar el diálogo como modal
+            dialogo = DialogoConstruccion(
+                iface=self.iface,
+                parent=self.iface.mainWindow(),
+                construccion_id=construccion_id
+            )
             dialogo.exec_()
-            
-            # Opcionalmente, se podría refrescar la capa de construcciones después de cerrar el diálogo
             self.refrescar_capa_construcciones()
-            
+ 
         except Exception as ex:
             print(f"Error al abrir diálogo de construcción: {str(ex)}")
             self.driver.showMessage(f'Error al abrir diálogo de construcción: {str(ex)}', 1, 15)
             import traceback
             traceback.print_exc()
-
-
-    def refrescar_capa_construcciones(self):
+ 
+ 
+    def abrir_gestion_construccion(self):
         """
-        Refresca la capa de construcciones para mostrar los cambios realizados.
+        NUEVO: Abre DialogoConstruccion desde el botón de la barra,
+        sin ID previo — el usuario selecciona desde la lista interna.
         """
         try:
-            # Buscar la capa de construcciones en el proyecto
+            dialogo = DialogoConstruccion(
+                iface=self.iface,
+                parent=self.iface.mainWindow(),
+                construccion_id=None
+            )
+            dialogo.exec_()
+            self.refrescar_capa_construcciones()
+ 
+        except Exception as ex:
+            print(f"Error al abrir gestión de construcciones: {str(ex)}")
+            self.driver.showMessage(f'Error al abrir gestión: {str(ex)}', 1, 15)
+            import traceback
+            traceback.print_exc()
+ 
+ 
+    def refrescar_capa_construcciones(self):
+        try:
             for layer in QgsProject.instance().mapLayers().values():
                 if 'construcciones19' in layer.name().lower():
-                    # Refrescar la capa
                     layer.triggerRepaint()
                     print(f"Capa {layer.name()} refrescada")
                     break
         except Exception as ex:
             print(f"Error al refrescar capa: {str(ex)}")
-
-
+ 
+ 
     def crear_plantas_construccion(self, construccion_id, valor_plantas, valor_anyo, cur_area):
         """
         Función auxiliar para crear plantas de una construcción automáticamente.
-        
-        Args:
-            construccion_id (int): ID de la construcción.
-            valor_plantas (str): Número de plantas como string.
-            valor_anyo (str): Año de construcción.
-            cur_area (float): Superficie de la construcción.
         """
         try:
             if construccion_id:
-                # Convertir número de plantas a entero
                 num_plantas = int(valor_plantas) if valor_plantas.isdigit() else 0
                 plantas_creadas = 0
-                
-                # Verificar si ya existe la planta baja para esta construcción
+ 
+                # Planta baja
                 check_planta_sql = f"""
                     SELECT id_planta FROM catastro.construcciones_plantas19
                     WHERE id_construccion = {construccion_id} AND id_planta = 0
                 """
                 resultado_check = self.driver.read(sql=check_planta_sql, multi=False)
-                
+ 
                 if resultado_check:
                     print(f"La planta baja ya existe para la construcción ID: {construccion_id}")
                 else:
-                    # Obtener el siguiente ID disponible para planta baja
                     sql_ultimo_id_planta = "SELECT COALESCE(MAX(id), 0) + 1 AS proximo_id FROM catastro.construcciones_plantas19"
                     resultado_proximo_id = self.driver.read(sql=sql_ultimo_id_planta, multi=False)
-                    proximo_id_planta = 1  # Valor por defecto
-                    
+                    proximo_id_planta = 1
+ 
                     if resultado_proximo_id:
                         if isinstance(resultado_proximo_id, dict) and 'proximo_id' in resultado_proximo_id:
                             proximo_id_planta = resultado_proximo_id['proximo_id']
@@ -4245,53 +4511,47 @@ class ColegioRiberalta:
                                 proximo_id_planta = int(resultado_proximo_id[0])
                             except:
                                 proximo_id_planta = 1
-                    
-                    # Crear la planta baja (id_planta = 0)
+ 
                     planta_baja_sql = f"""
                         INSERT INTO catastro.construcciones_plantas19 
                         (id, id_construccion, id_planta, anyo, superficie, geom)
                         SELECT 
                             {proximo_id_planta},
                             {construccion_id}, 
-                            0,  -- Planta baja es 0
+                            0,
                             '{valor_anyo}', 
                             {cur_area}, 
-                            geom  -- Mantener el SRID original sin transformar
+                            geom
                         FROM catastro.construcciones19
                         WHERE id = {construccion_id}
                     """
-                    
                     try:
                         self.driver.create(sql=planta_baja_sql)
                         print(f"Planta baja creada para construcción ID: {construccion_id}")
                         plantas_creadas += 1
                     except Exception as e:
                         print(f"Error al crear planta baja: {str(e)}")
-                
-                # Calcular plantas adicionales correctamente
-                # La planta baja ya es una planta, así que creamos num_plantas - 1 plantas adicionales
-                plantas_adicionales = max(0, num_plantas - 1)  # Evitamos valores negativos
-                
-                # Crear plantas adicionales según el número especificado
+ 
+                # Plantas adicionales
+                plantas_adicionales = max(0, num_plantas - 1)
+ 
                 for i in range(1, plantas_adicionales + 1):
-                    id_planta = i  # Primera planta adicional = 1, Segunda = 2, etc.
-                    
-                    # Verificar si ya existe esta planta
+                    id_planta = i
+ 
                     check_planta_sql = f"""
                         SELECT id_planta FROM catastro.construcciones_plantas19
                         WHERE id_construccion = {construccion_id} AND id_planta = {id_planta}
                     """
                     resultado_check = self.driver.read(sql=check_planta_sql, multi=False)
-                    
+ 
                     if resultado_check:
                         print(f"La planta {id_planta} ya existe para la construcción ID: {construccion_id}")
                         continue
-                    
-                    # Obtener el siguiente ID disponible para esta planta
+ 
                     sql_ultimo_id_planta = "SELECT COALESCE(MAX(id), 0) + 1 AS proximo_id FROM catastro.construcciones_plantas19"
                     resultado_proximo_id = self.driver.read(sql=sql_ultimo_id_planta, multi=False)
-                    proximo_id_planta = 1  # Valor por defecto
-                    
+                    proximo_id_planta = 1
+ 
                     if resultado_proximo_id:
                         if isinstance(resultado_proximo_id, dict) and 'proximo_id' in resultado_proximo_id:
                             proximo_id_planta = resultado_proximo_id['proximo_id']
@@ -4302,7 +4562,7 @@ class ColegioRiberalta:
                                 proximo_id_planta = int(resultado_proximo_id[0])
                             except:
                                 proximo_id_planta = 1
-                    
+ 
                     planta_sql = f"""
                         INSERT INTO catastro.construcciones_plantas19 
                         (id, id_construccion, id_planta, anyo, superficie, geom)
@@ -4312,7 +4572,7 @@ class ColegioRiberalta:
                             {id_planta}, 
                             '{valor_anyo}', 
                             {cur_area}, 
-                            geom  -- Mantener el SRID original sin transformar
+                            geom
                         FROM catastro.construcciones19 
                         WHERE id = {construccion_id}
                     """
@@ -4322,46 +4582,36 @@ class ColegioRiberalta:
                         plantas_creadas += 1
                     except Exception as e:
                         print(f"Error al crear planta {id_planta}: {str(e)}")
-                
-                # Mostrar mensaje de éxito
+ 
                 if plantas_creadas > 0:
                     self.driver.showMessage(
-                        f'Se crearon automáticamente {plantas_creadas} plantas', 
-                        0, 5
-                    )
+                        f'Se crearon automáticamente {plantas_creadas} plantas', 0, 5)
                 else:
                     self.driver.showMessage(
-                        'No se crearon plantas adicionales (ya existían o hubo errores)', 
-                        0, 3
-                    )
+                        'No se crearon plantas adicionales (ya existían o hubo errores)', 0, 3)
+ 
         except Exception as ex:
             print(f"Error en crear_plantas_construccion: {str(ex)}")
             self.driver.showMessage(f'Error al crear plantas: {str(ex)}', 1, 15)
  
-        
-   
+ 
     def cargar_tablabbdd_construccion(self):
         try:
             list_widget = self.dlg_export_feature_construccion.list_bbdd
-            
-            # Limpiar el list widget
+ 
             for i in range(list_widget.count()):
                 list_widget.takeItem(0)
-
-            # Obtener datos de la base de datos
+ 
             sql = '''SELECT codigo, direccion 
                     FROM catastro.terrenos19 
                     ORDER BY codigo'''
             r = self.driver.read(sql=sql, multi=True)
-            
-            # Crear lista de items
+ 
             lista = [f"{item['codigo']}   {item['direccion']}" for item in r]
-            
-            # Agregar items al list widget
             list_widget.addItems(lista)
-            
+ 
             self.driver.showMessage('Datos cargados exitosamente', 0, 3)
-            
+ 
         except Exception as ex:
             print(f"Error en cargar_tablabbdd_construccion: {str(ex)}")
             self.driver.showMessage(f'Error al cargar datos: {str(ex)}', 1, 15)
@@ -4617,109 +4867,174 @@ class ColegioRiberalta:
     construcciones_cargadas = ""
  
     def cargar_tablaconstruccionbd_plantas(self):
+        """
+        Carga TODAS las construcciones mostrando numconstruccion
+        para identificar cada construcción dentro de su bloque.
+        """
         try:
             print("DEBUG: Iniciando carga de construcciones")
             list_widget = self.dlg_listar_construccion_plantas.list_bbdd
             list_widget.clear()
-            
-            # Obtener datos de construcciones
+ 
             sql = """
-                SELECT cv.id, cv.numbloque, cv.codigo, cv.superficie, cv.nombreuso, cv.anyo, cv.tipoconstruccion,
-                    c.numplanta
+                SELECT cv.id, cv.numbloque, cv.numconstruccion,
+                       cv.codigo, cv.superficie, cv.nombreuso,
+                       cv.anyo, cv.tipoconstruccion,
+                       c.numconstruccion AS nc
                 FROM catastro.construccionesvista19 cv
                 LEFT JOIN catastro.construcciones19 c ON cv.id = c.id
-                ORDER BY cv.codigo, cv.numbloque
+                ORDER BY cv.codigo, cv.numbloque, cv.numconstruccion, cv.id
             """
             resultados = self.driver.read(sql)
             print(f"DEBUG: {len(resultados)} construcciones encontradas")
-            
+ 
             for item in resultados:
                 try:
-                    # Crear texto para mostrar
-                    texto = f"{item['id']}    {item['numbloque']}    {item['codigo']}    {item['nombreuso']}"
+                    superficie     = f"{float(item['superficie']):.2f}" if item['superficie'] else "N/A"
+                    tipo           = item['tipoconstruccion'] if item['tipoconstruccion'] else "Sin definir"
+                    uso            = item['nombreuso']        if item['nombreuso']        else "Sin definir"
+                    numconstruccion = item.get('numconstruccion') or item.get('nc') or 1
+ 
+                    texto = (f"{item['id']} | "
+                             f"Bloque: {item['numbloque']} | "
+                             f"Constr: {numconstruccion} | "
+                             f"Sup: {superficie}m² | "
+                             f"Tipo: {tipo} | "
+                             f"Uso: {uso} | "
+                             f"Año: {item['anyo']}")
+ 
                     list_item = QListWidgetItem(texto)
-                    
-                    # Guardar datos completos en el UserRole
                     list_item.setData(Qt.UserRole, item)
-                    
-                    # Si ya tiene planta, cambiar el color del texto a gris
-                    if item.get('numplanta'):
+ 
+                    # Marcar en gris si ya tiene plantas registradas
+                    if item.get('nc'):
                         list_item.setForeground(Qt.gray)
-                    
-                    # Agregar item a la lista
+ 
                     list_widget.addItem(list_item)
-                    
+ 
                 except Exception as e:
                     print(f"ERROR procesando item: {str(e)}")
                     continue
-            
+ 
             self.construcciones_cargadas = resultados
-            
-            # NUEVO: Actualizar también los datos internos en la clase ListarConstruccionPlantas
+ 
             if hasattr(self.dlg_listar_construccion_plantas, 'update_with_external_data'):
                 self.dlg_listar_construccion_plantas.update_with_external_data(resultados)
                 print("✅ Datos sincronizados con ListarConstruccionPlantas")
-            
+ 
+            # Reconectar resaltado en mapa
+            try:
+                self.dlg_listar_construccion_plantas.list_bbdd.itemClicked.disconnect(
+                    self.resaltar_construccion_en_mapa)
+            except Exception:
+                pass
+            self.dlg_listar_construccion_plantas.list_bbdd.itemClicked.connect(
+                self.resaltar_construccion_en_mapa)
+ 
             print(f"DEBUG: Lista cargada con {list_widget.count()} items")
-            
+ 
         except Exception as e:
             print(f"ERROR en cargar_tablaconstruccionbd_plantas: {str(e)}")
             import traceback
             print(traceback.format_exc())
-        
+ 
+ 
     def planta_busca_ref(self):
-        list_widget = self.dlg_listar_construccion_plantas.list_bbdd
+        """
+        Busca TODAS las construcciones del código catastral indicado,
+        mostrando numconstruccion para identificar cada una dentro del bloque.
+        Sin agrupación por bloque — muestra todas.
+        """
+        list_widget   = self.dlg_listar_construccion_plantas.list_bbdd
         text_busqueda = self.dlg_select_construccion_planta_busca_ref.text_titular
         valor_busqueda = text_busqueda.toPlainText().strip()
-        
-        # Consulta modificada para tomar solo el registro más reciente por bloque
-        sql = f'''
-            WITH RankedConstrucciones AS (
-                SELECT id, numbloque, codigo, superficie, tipoconstruccion, 
-                    nombreuso, anyo,
-                    ROW_NUMBER() OVER (PARTITION BY numbloque ORDER BY id DESC) as rn
-                FROM catastro.construccionesvista19 
-                WHERE codigo = '{valor_busqueda}'
-            )
-            SELECT id, numbloque, codigo, superficie, tipoconstruccion, 
-                nombreuso, anyo
-            FROM RankedConstrucciones
-            WHERE rn = 1
-            ORDER BY numbloque
-        '''
-        
+ 
+        sql = f"""
+            SELECT id, numbloque, numconstruccion,
+                   codigo, superficie, tipoconstruccion,
+                   nombreuso, anyo
+            FROM catastro.construccionesvista19
+            WHERE codigo = '{valor_busqueda}'
+            ORDER BY numbloque, numconstruccion, id
+        """
+ 
         r = self.driver.read(sql)
-        print(f"Registros encontrados (un registro por bloque): {len(r)}")
-        
+        print(f"Registros encontrados para '{valor_busqueda}': {len(r)}")
+ 
         list_widget.clear()
-        
+ 
         if len(r) > 0:
             lista = []
             for item in r:
                 try:
-                    superficie = f"{float(item['superficie']):.2f}" if item['superficie'] else "N/A"
-                    tipo = item['tipoconstruccion'] if item['tipoconstruccion'] else "Sin definir"
-                    uso = item['nombreuso'] if item['nombreuso'] else "Sin definir"
-                    
+                    superficie      = f"{float(item['superficie']):.2f}" if item['superficie'] else "N/A"
+                    tipo            = item['tipoconstruccion'] if item['tipoconstruccion'] else "Sin definir"
+                    uso             = item['nombreuso']        if item['nombreuso']        else "Sin definir"
+                    numconstruccion = item.get('numconstruccion') or 1
+ 
                     registro = (f"{item['id']} | "
-                            f"Bloque: {item['numbloque']} | "
-                            f"Sup: {superficie}m² | "
-                            f"Tipo: {tipo} | "
-                            f"Uso: {uso} | "
-                            f"Año: {item['anyo']}")
+                                f"Bloque: {item['numbloque']} | "
+                                f"Constr: {numconstruccion} | "
+                                f"Sup: {superficie}m² | "
+                                f"Tipo: {tipo} | "
+                                f"Uso: {uso} | "
+                                f"Año: {item['anyo']}")
                     lista.append(registro)
-                    print(f"Procesando registro único: {registro}")
+                    print(f"  → {registro}")
+ 
                 except Exception as e:
                     print(f"Error procesando registro: {str(e)}")
                     continue
-            
+ 
             if lista:
                 list_widget.addItems(lista)
                 list_widget.setCurrentRow(0)
+                # Reconectar resaltado en mapa tras nueva búsqueda
+                try:
+                    self.dlg_listar_construccion_plantas.list_bbdd.itemClicked.disconnect(
+                        self.resaltar_construccion_en_mapa)
+                except Exception:
+                    pass
+                self.dlg_listar_construccion_plantas.list_bbdd.itemClicked.connect(
+                    self.resaltar_construccion_en_mapa)
             else:
-                self.driver.showMessage('Error al procesar los registros.',1,15)
-        else: 
-            self.driver.showMessage('No existen registros con la referencia Catastral.',1,15)
+                self.driver.showMessage('Error al procesar los registros.', 1, 15)
+        else:
+            self.driver.showMessage(
+                'No existen registros con la referencia Catastral.', 1, 15)
+ 
+ 
+    def recalcular_numconstruccion(self, codigo, numbloque):
+        """
+        Reasigna numconstruccion secuencialmente (1, 2, 3...) para todas
+        las construcciones de un mismo codigo+bloque.
+        Llamar solo cuando se elimine una construcción para cerrar huecos.
+        REEMPLAZA a actualizar_total_plantas (que era redundante).
+        """
+        try:
+            sql = f"""
+                UPDATE catastro.construcciones19 c
+                SET numconstruccion = sub.rn
+                FROM (
+                    SELECT id,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY codigo, numbloque
+                               ORDER BY id
+                           ) AS rn
+                    FROM catastro.construcciones19
+                    WHERE codigo = '{codigo}'
+                    AND numbloque = {numbloque}
+                ) sub
+                WHERE c.id = sub.id
+                AND c.codigo = '{codigo}'
+                AND c.numbloque = {numbloque}
+            """
+            self.driver.create(sql=sql)
+            print(f"numconstruccion recalculado — codigo={codigo}, bloque={numbloque}")
+        except Exception as e:
+            print(f"Error en recalcular_numconstruccion: {str(e)}")
+            import traceback
+            traceback.print_exc()
     
     
     def cargar_plantas(self):
@@ -4976,8 +5291,25 @@ class ColegioRiberalta:
             self.driver.showMessage(f"Error al generar informe: {str(e)}", 1, 5)        
     
     def abrir_dialogo_listarconstruccion_plantas(self):
+        """
+        Abre el diálogo de construcciones y plantas.
+        FIX: conecta list_bbdd con resaltado en mapa al abrir.
+        """
         self.dlg_listar_construccion_plantas.show()
         self.cargar_tablaconstruccionbd_plantas()
+ 
+        # Conectar selección de lista con resaltado en mapa
+        # Desconectar primero para evitar conexiones duplicadas al reabrir
+        try:
+            self.dlg_listar_construccion_plantas.list_bbdd.itemClicked.disconnect(
+                self.resaltar_construccion_en_mapa)
+        except Exception:
+            pass
+        self.dlg_listar_construccion_plantas.list_bbdd.itemClicked.connect(
+            self.resaltar_construccion_en_mapa)
+ 
+        # Limpiar selección previa en el mapa al abrir
+        self.limpiar_seleccion_construccion_mapa()
     
     def abrir_formulario_plantas(self):
         # Obtener el ID de construcción seleccionada
@@ -5067,6 +5399,98 @@ class ColegioRiberalta:
             print("DEBUG: Formulario limpiado correctamente")
         except Exception as e:
             print(f"ERROR al limpiar formulario: {str(e)}")
+
+    def resaltar_construccion_en_mapa(self, item):
+        """
+        Al hacer click en la lista de construcciones:
+          1. Extrae el ID del texto del item
+          2. Selecciona y resalta el polígono en la capa de construcciones
+          3. Hace zoom al polígono para ubicarlo visualmente
+        """
+        try:
+            # El texto tiene formato:
+            # "23108 | Bloque: 2 | Sup: 16.70m² | Tipo: ... | Uso: ... | Año: ..."
+            # También puede venir con datos del UserRole si se usó QListWidgetItem
+            texto = item.text()
+ 
+            # Intentar extraer ID del texto (primer segmento antes del '|')
+            id_str = texto.split('|')[0].strip()
+            if not id_str.isdigit():
+                # Intentar con el UserRole por si tiene datos completos
+                datos = item.data(Qt.UserRole)
+                if datos and isinstance(datos, dict) and 'id' in datos:
+                    id_construccion = int(datos['id'])
+                else:
+                    print(f"No se pudo extraer ID del item: {texto}")
+                    return
+            else:
+                id_construccion = int(id_str)
+ 
+            print(f"Resaltando construcción ID: {id_construccion}")
+            self._resaltar_feature_construccion(id_construccion)
+ 
+        except Exception as e:
+            print(f"Error en resaltar_construccion_en_mapa: {str(e)}")
+            import traceback
+            traceback.print_exc()
+ 
+ 
+    def _resaltar_feature_construccion(self, id_construccion):
+        """
+        Busca la capa de construcciones en QGIS, selecciona el feature
+        por ID y hace zoom con margen para ubicarlo en pantalla.
+        """
+        try:
+            from qgis.core import QgsProject
+            from qgis.utils import iface
+ 
+            # Buscar la capa — acepta cualquier nombre que contenga 'construccion'
+            capa = None
+            for layer in QgsProject.instance().mapLayers().values():
+                if 'construccion' in layer.name().lower():
+                    capa = layer
+                    break
+ 
+            if not capa:
+                print("No se encontró la capa de construcciones en el proyecto QGIS")
+                return
+ 
+            # Limpiar selección previa y seleccionar el feature
+            capa.removeSelection()
+            capa.selectByExpression(f'"id" = {id_construccion}')
+ 
+            features = capa.selectedFeatures()
+            if not features:
+                print(f"No se encontró el feature con id={id_construccion} en la capa")
+                return
+ 
+            # Zoom al polígono con margen
+            box = features[0].geometry().boundingBox()
+            box.grow(5)  # margen de 5 unidades alrededor del polígono
+            iface.mapCanvas().setExtent(box)
+            iface.mapCanvas().refresh()
+ 
+            print(f"✔ Feature id={id_construccion} resaltado en el mapa")
+ 
+        except Exception as e:
+            print(f"Error en _resaltar_feature_construccion: {str(e)}")
+            import traceback
+            traceback.print_exc()
+ 
+ 
+    def limpiar_seleccion_construccion_mapa(self):
+        """
+        Limpia la selección en la capa de construcciones.
+        Llamar al cerrar el diálogo o al limpiar la búsqueda.
+        """
+        try:
+            from qgis.core import QgsProject
+            for layer in QgsProject.instance().mapLayers().values():
+                if 'construccion' in layer.name().lower():
+                    layer.removeSelection()
+                    break
+        except Exception as e:
+            print(f"Error al limpiar selección en mapa: {str(e)}")
         
     
         
@@ -5566,7 +5990,7 @@ select array_to_string(array_agg(predios),',') as predios ,lindero from data gro
         
         
     def mostrar_layout(self):
-    
+        
         
         QgsProject.instance().removeAllMapLayers()
         
@@ -7143,9 +7567,11 @@ select array_to_string(array_agg(predios),',') as predios ,lindero from data gro
             # 6. Consulta para obtener construcciones
             uri = QgsDataSourceUri()
             uri.setConnection(params['host'], params['port'], params['dbname'], params['user'], params['password'])
-            sql = f''' select id, numbloque, plantas, anyo, st_area(geom) area, geom 
+            sql = f''' select id, numbloque, numconstruccion, plantas, anyo, 
+                    round(cast(st_area(geom) as numeric), 2) as area, geom 
                     from catastro.construccionesvista19  
-                    where codigo = '{list_widget_name_ref}' '''
+                    where codigo = '{list_widget_name_ref}'
+                    order by numbloque, numconstruccion '''
             uri.setDataSource('', f'({sql})', 'geom', '', 'id')
             layer_construcciones = QgsVectorLayer(uri.uri(False), 'layer_construcciones', 'postgres')
 
@@ -7165,15 +7591,27 @@ select array_to_string(array_agg(predios),',') as predios ,lindero from data gro
             # 7. Procesar áreas de construcciones
             areas_construcciones = {'area_c1': 0, 'area_c2': 0, 'area_c3': 0, 'area_c4': 0, 'area_c5': 0, 'area_c6': 0}
             
-            data_construccion = {f['numbloque']: round(f['area'], 2) for f in list(layer_construcciones.getFeatures())}
-            i = 1
-            for k in areas_construcciones:
+            features_const = sorted(
+                list(layer_construcciones.getFeatures()), 
+                key=lambda f: (f['numbloque'], f['numconstruccion'])
+            )
+
+            # Prints de diagnóstico AQUÍ, fuera del sorted
+            print(f"Total construcciones encontradas: {len(features_const)}")
+            for f in features_const:
+                print(f"numbloque={f['numbloque']}, numconstruccion={f['numconstruccion']}, area={f['area']}")
+
+            keys = list(areas_construcciones.keys())
+
+            for idx, f in enumerate(features_const):
+                if idx >= 6:
+                    break
                 try:
-                    areas_construcciones[k] = data_construccion[i]
-                    i += 1
-                except KeyError:
-                    areas_construcciones[k] = 0
-            
+                    area = round(f['area'], 2) if f['area'] else 0
+                    areas_construcciones[keys[idx]] = area
+                except:
+                    areas_construcciones[keys[idx]] = 0
+
             c_total = round(sum(areas_construcciones.values()), 2)
             
             # Determinar el tipo de inmueble (TERRENO o CASA) según si hay construcciones
@@ -9036,6 +9474,522 @@ select array_to_string(array_agg(predios),',') as predios ,lindero from data gro
             nDerecha +=1
             
         print('coordenadasArrayDerecha',coordenadasArrayDerecha)
+
+    # ========================================
+    # FUNCIONES VISTA GENERAL
+    # ========================================
+    
+    def cargar_vista_general(self):
+        """
+        Carga una vista general del municipio.
+        Limpia el proyecto y carga todas las capas: terrenos, construcciones, ejes viales y ortofoto.
+        """
+        try:
+            print("\n" + "="*60)
+            print("🗺️ INICIANDO CARGA DE VISTA GENERAL")
+            print("="*60)
+            
+            # Mostrar mensaje de progreso
+            self.driver.showMessage('Cargando vista general...', 0, 2)
+            
+            # PASO 1: Limpiar proyecto
+            print("\n[1/4] Limpiando proyecto...")
+            self.limpiar_proyecto()
+            
+            # PASO 2: Cargar capas vectoriales
+            print("\n[2/4] Cargando capas vectoriales...")
+            capas_vectoriales = self.cargar_capas_vectoriales_generales()
+            
+            if not capas_vectoriales:
+                self.driver.showMessage('Error al cargar capas vectoriales', 1, 5)
+                return
+            
+            # PASO 3: Cargar ortofoto
+            print("\n[3/4] Cargando ortofoto...")
+            capa_ortofoto = self.cargar_ortofoto_general()
+            
+            # PASO 4: Organizar en grupo
+            print("\n[4/4] Organizando capas...")
+            self.organizar_capas_vista_general(capas_vectoriales, capa_ortofoto)
+            
+            # Hacer zoom a extensión total
+            self.zoom_extension_completa(capas_vectoriales)
+            
+            print("\n" + "="*60)
+            print("✅ VISTA GENERAL CARGADA EXITOSAMENTE")
+            print("="*60 + "\n")
+            
+            self.driver.showMessage('✅ Vista general cargada correctamente', 0, 3)
+            
+        except Exception as ex:
+            print(f"\n❌ ERROR en cargar_vista_general: {str(ex)}")
+            import traceback
+            traceback.print_exc()
+            self.driver.showMessage(f'Error al cargar vista general: {str(ex)}', 1, 5)
+    
+    
+    def limpiar_proyecto(self):
+        """
+        Limpia todas las capas del proyecto actual.
+        """
+        try:
+            # Obtener todas las capas del proyecto
+            layers = QgsProject.instance().mapLayers()
+            layer_ids = list(layers.keys())
+            
+            if len(layer_ids) == 0:
+                print("   ℹ️ No hay capas para limpiar")
+                return
+            
+            print(f"   🗑️ Removiendo {len(layer_ids)} capas...")
+            
+            # Remover todas las capas
+            QgsProject.instance().removeMapLayers(layer_ids)
+            
+            # Limpiar grupos vacíos
+            root = QgsProject.instance().layerTreeRoot()
+            for group in root.findGroups():
+                if len(group.findLayers()) == 0:
+                    root.removeChildNode(group)
+            
+            print("   ✅ Proyecto limpiado")
+            
+        except Exception as ex:
+            print(f"   ⚠️ Error al limpiar proyecto: {str(ex)}")
+    
+    
+    def cargar_capas_vectoriales_generales(self):
+        """
+        Carga todas las capas vectoriales generales desde PostgreSQL.
+        Configura etiquetas para visualizarse solo a escala 1:500 o mayor.
+        Retorna diccionario con las capas cargadas.
+        """
+        capas = {}
+        
+        try:
+            # Configurar conexión
+            params = self.driver.params
+            uri = QgsDataSourceUri()
+            uri.setConnection(params['host'], params['port'], params['dbname'], params['user'], params['password'])
+            
+            # Definir capas a cargar con configuración de etiquetas
+            capas_config = [
+                {
+                    'nombre': 'Terrenos',
+                    'tabla': 'terrenos19',
+                    'estilo': r'\estilos\layer_terreno.qml',
+                    'key': 'terrenos',
+                    'etiqueta_campo': 'codigo',
+                    'etiqueta_color': 'black',
+                    'etiqueta_tamaño': 8,
+                    'habilitar_etiquetas': True  # Controlar si se muestran etiquetas
+                },
+                {
+                    'nombre': 'Construcciones',
+                    'tabla': 'construcciones19',
+                    'estilo': r'\estilos\layer_construcciones.qml',
+                    'key': 'construcciones',
+                    'etiqueta_campo': 'codigo',
+                    'etiqueta_color': 'blue',
+                    'etiqueta_tamaño': 7,
+                    'habilitar_etiquetas': True
+                },
+                {
+                    'nombre': 'Ejes Viales',
+                    'tabla': 'ejevias',
+                    'estilo': r'\estilos\layer_ejevia.qml',
+                    'key': 'ejevias',
+                    'etiqueta_campo': 'nombre',
+                    'etiqueta_color': 'darkred',
+                    'etiqueta_tamaño': 9,
+                    'habilitar_etiquetas': True
+                }
+            ]
+            
+            # Cargar cada capa
+            for config in capas_config:
+                try:
+                    print(f"   📊 Cargando {config['nombre']}...")
+                    
+                    # Configurar origen de datos (sin filtros WHERE)
+                    uri.setDataSource('catastro', config['tabla'], 'geom', '', 'id')
+                    
+                    # Crear capa
+                    layer = QgsVectorLayer(uri.uri(False), config['nombre'], 'postgres')
+                    
+                    if not layer.isValid():
+                        print(f"   ⚠️ Advertencia: Capa {config['nombre']} no es válida")
+                        continue
+                    
+                    # Contar features
+                    feature_count = layer.featureCount()
+                    print(f"      └─ {feature_count} features cargadas")
+                    
+                    # PASO 1: Aplicar estilo QML
+                    estilo_path = self.plugin_dir + config['estilo']
+                    if os.path.exists(estilo_path):
+                        layer.loadNamedStyle(estilo_path)
+                        print(f"      └─ Estilo QML aplicado")
+                    else:
+                        print(f"      └─ ⚠️ Estilo no encontrado: {estilo_path}")
+                    
+                    # PASO 2: FORZAR configuración de etiquetas DESPUÉS del estilo
+                    # Esto sobrescribe cualquier configuración del QML
+                    if config.get('habilitar_etiquetas', False):
+                        self.configurar_etiquetas_con_escala(
+                            layer,
+                            campo=config['etiqueta_campo'],
+                            color=config['etiqueta_color'],
+                            tamaño=config['etiqueta_tamaño'],
+                            escala_maxima=500  # Solo visible a escala 1:500 o mayor
+                        )
+                    else:
+                        # Deshabilitar etiquetas completamente
+                        layer.setLabelsEnabled(False)
+                        print(f"      └─ Etiquetas deshabilitadas")
+                    
+                    layer.triggerRepaint()
+                    
+                    # Guardar capa en diccionario
+                    capas[config['key']] = layer
+                    
+                    print(f"   ✅ {config['nombre']} cargado correctamente")
+                    
+                except Exception as ex:
+                    print(f"   ❌ Error al cargar {config['nombre']}: {str(ex)}")
+                    import traceback
+                    traceback.print_exc()
+                    continue
+            
+            if len(capas) == 0:
+                print("   ❌ No se pudo cargar ninguna capa vectorial")
+                return None
+            
+            print(f"\n   ✅ {len(capas)} capas vectoriales cargadas")
+            return capas
+            
+        except Exception as ex:
+            print(f"   ❌ Error general al cargar capas vectoriales: {str(ex)}")
+            import traceback
+            traceback.print_exc()
+            return None
+        
+
+    def configurar_etiquetas_con_escala(self, layer, campo, color='black', tamaño=8, escala_maxima=500):
+        """
+        Configura las etiquetas de una capa para que se visualicen solo a una escala específica.
+        FUERZA la configuración sobrescribiendo cualquier estilo previo.
+        
+        CORRECCIÓN: Arregla error de enum QgsPalLayerSettings.OverPoint
+        
+        Args:
+            layer: Capa vectorial de QGIS
+            campo: Nombre del campo a mostrar en la etiqueta
+            color: Color de la etiqueta (nombre o hex)
+            tamaño: Tamaño de la fuente en puntos
+            escala_maxima: Escala máxima para mostrar etiquetas (ej: 500 para 1:500)
+        """
+        try:
+            # Verificar que el campo existe en la capa
+            fields = layer.fields()
+            field_names = [field.name() for field in fields]
+            
+            if campo not in field_names:
+                print(f"      └─ ⚠️ Campo '{campo}' no encontrado. Campos disponibles: {field_names[:5]}")
+                # Intentar encontrar un campo alternativo
+                for alt_campo in ['codigo', 'nombre', 'id']:
+                    if alt_campo in field_names:
+                        campo = alt_campo
+                        print(f"      └─ Usando campo alternativo: '{campo}'")
+                        break
+                else:
+                    print(f"      └─ ⚠️ No se configuraron etiquetas")
+                    return
+            
+            # Crear configuración de etiquetas NUEVA (no usar la del QML)
+            settings = QgsPalLayerSettings()
+            
+            # Campo a mostrar
+            settings.fieldName = campo
+            
+            # Habilitar etiquetas
+            settings.enabled = True
+            settings.drawLabels = True
+            
+            # Configuración de texto
+            text_format = QgsTextFormat()
+            
+            # Fuente
+            font = text_format.font()
+            font.setPointSize(tamaño)
+            font.setBold(True)
+            text_format.setFont(font)
+            
+            # Color del texto
+            text_format.setColor(QColor(color))
+            
+            # Fondo/buffer para mejor legibilidad
+            buffer = QgsTextBufferSettings()
+            buffer.setEnabled(True)
+            buffer.setSize(1)
+            buffer.setColor(QColor('white'))
+            text_format.setBuffer(buffer)
+            
+            settings.setFormat(text_format)
+            
+            # Posición de la etiqueta (centrada en geometría)
+            settings.placement = Qgis.LabelPlacement.OverPoint
+            settings.centroidWhole = True  # Usar centroide de toda la geometría
+            
+            # ================================================
+            # CONFIGURACIÓN CRÍTICA DE ESCALA
+            # ================================================
+            settings.scaleVisibility = True  # HABILITAR control por escala
+            
+            # En QGIS:
+            # - maximumScale = escala MÁS CERCANA (número más pequeño, más zoom)
+            # - minimumScale = escala MÁS LEJANA (número más grande, menos zoom)
+            # 
+            # Para mostrar SOLO cuando zoom ≥ 1:500:
+            settings.maximumScale = 1  # Límite más cercano (siempre visible al acercar)
+            settings.minimumScale = 500  # Límite más lejano (ocultar después de 1:500)
+            
+            print(f"      └─ Etiquetas: campo='{campo}', visible solo cuando escala ≤ 1:{escala_maxima}")
+            
+            # Aplicar configuración a la capa (SOBRESCRIBE cualquier config previa)
+            labeling = QgsVectorLayerSimpleLabeling(settings)
+            layer.setLabeling(labeling)
+            layer.setLabelsEnabled(True)
+            
+            # Forzar actualización
+            layer.triggerRepaint()
+            
+        except Exception as ex:
+            print(f"      └─ ❌ Error al configurar etiquetas: {str(ex)}")
+            import traceback
+            traceback.print_exc()
+
+    
+    def cargar_ortofoto_general(self):
+        """
+        Carga ortofoto desde GeoServer (primero) o desde ruta local (fallback).
+        Retorna la capa de ortofoto o None si no se puede cargar.
+        """
+        try:
+            # PASO 1: Intentar cargar desde GeoServer
+            print("   📷 Intentando cargar ortofoto desde GeoServer...")
+            
+            try:
+                config = self.get_geoserver_config()
+                
+                # Construir URI WMS
+                uri = QgsDataSourceUri()
+                uri.setParam("url", f"{config['url']}/wms")
+                uri.setParam("layers", config['ortofoto_layer'])
+                uri.setParam("format", config.get('ortofoto_format', 'image/png'))
+                uri.setParam("crs", config.get('ortofoto_crs', 'EPSG:32720'))
+                uri.setParam("styles", "")
+                
+                # Crear capa WMS
+                ortofoto_layer = QgsRasterLayer(
+                    uri.encodedUri().data().decode(),
+                    "Ortofoto",
+                    "wms"
+                )
+                
+                if ortofoto_layer.isValid():
+                    print(f"   ✅ Ortofoto cargada desde GeoServer: {config['ortofoto_layer']}")
+                    print(f"      └─ CRS: {ortofoto_layer.crs().authid()}")
+                    return ortofoto_layer
+                else:
+                    print("   ⚠️ GeoServer: Capa no válida, intentando ruta local...")
+                    
+            except Exception as ex:
+                print(f"   ⚠️ Error con GeoServer: {str(ex)}")
+                print("      └─ Intentando cargar desde ruta local...")
+            
+            # PASO 2: Fallback a ruta local
+            # Verificar que existe la variable ortofoto
+            if not hasattr(self, 'ortofoto'):
+                print("   ⚠️ No hay ruta de ortofoto configurada (self.ortofoto no existe)")
+                return None
+            
+            ruta_ortofoto = self.ortofoto
+            print(f"   📷 Ruta ortofoto local: {ruta_ortofoto}")
+            
+            # Verificar que el archivo existe
+            if not os.path.exists(ruta_ortofoto):
+                print(f"   ⚠️ Archivo de ortofoto no encontrado en: {ruta_ortofoto}")
+                self.driver.showMessage('Ortofoto no encontrada (ni en GeoServer ni en ruta local)', 1, 3)
+                return None
+            
+            # Cargar ortofoto como capa raster
+            print("   📷 Cargando ortofoto desde archivo local...")
+            ortofoto_layer = QgsRasterLayer(ruta_ortofoto, "Ortofoto")
+            
+            if not ortofoto_layer.isValid():
+                print("   ❌ Error: Capa de ortofoto local no es válida")
+                self.driver.showMessage('Error al cargar ortofoto local', 1, 3)
+                return None
+            
+            print(f"      └─ Dimensiones: {ortofoto_layer.width()}x{ortofoto_layer.height()}")
+            print(f"      └─ CRS: {ortofoto_layer.crs().authid()}")
+            print("   ✅ Ortofoto cargada desde ruta local")
+            
+            return ortofoto_layer
+            
+        except Exception as ex:
+            print(f"   ⚠️ Error al cargar ortofoto: {str(ex)}")
+            import traceback
+            traceback.print_exc()
+            return None
+    
+    
+    def organizar_capas_vista_general(self, capas_vectoriales, capa_ortofoto):
+        """
+        Organiza las capas en un grupo "Vista General" con el orden correcto.
+        
+        Orden en panel de capas (de arriba hacia abajo):
+        - Ejes Viales (arriba - siempre visible)
+        - Construcciones
+        - Terrenos
+        - Ortofoto (abajo - fondo)
+        
+        IMPORTANTE: Se insertan en ORDEN INVERSO porque la última capa 
+        agregada al grupo queda abajo en el Z-order.
+        """
+        try:
+            print("\n   📁 Creando grupo 'Vista General'...")
+            
+            # Obtener root del proyecto
+            root = QgsProject.instance().layerTreeRoot()
+            
+            # Remover grupo anterior si existe
+            existing_group = root.findGroup("Vista General")
+            if existing_group:
+                root.removeChildNode(existing_group)
+            
+            # Crear nuevo grupo
+            group = root.addGroup("Vista General")
+            
+            # ORDEN INVERSO: La última capa agregada queda abajo (fondo)
+            orden_capas = []
+            
+            # 1. Ejes Viales (agregar primero = quedará arriba)
+            if 'ejevias' in capas_vectoriales:
+                orden_capas.append(('Ejes Viales', capas_vectoriales['ejevias']))
+            
+            # 2. Construcciones
+            if 'construcciones' in capas_vectoriales:
+                orden_capas.append(('Construcciones', capas_vectoriales['construcciones']))
+            
+            # 3. Terrenos
+            if 'terrenos' in capas_vectoriales:
+                orden_capas.append(('Terrenos', capas_vectoriales['terrenos']))
+            
+            # 4. Ortofoto (agregar última = quedará abajo como fondo)
+            if capa_ortofoto:
+                orden_capas.append(('Ortofoto', capa_ortofoto))
+            
+            # Agregar capas al proyecto y moverlas al grupo
+            for nombre, capa in orden_capas:
+                try:
+                    # Agregar al proyecto
+                    QgsProject.instance().addMapLayer(capa, False)  # False = no agregar a root
+                    
+                    # Agregar al grupo
+                    group.addLayer(capa)
+                    
+                    print(f"      └─ {nombre} agregado al grupo")
+                    
+                except Exception as ex:
+                    print(f"      └─ ⚠️ Error al agregar {nombre}: {str(ex)}")
+            
+            # Verificar orden final en consola
+            print("\n   📋 Orden final de capas (de arriba hacia abajo):")
+            for i, child in enumerate(group.children()):
+                if hasattr(child, 'name'):
+                    print(f"      {i+1}. {child.name()}")
+            
+            print("   ✅ Capas organizadas en grupo")
+            
+        except Exception as ex:
+            print(f"   ⚠️ Error al organizar capas: {str(ex)}")
+            import traceback
+            traceback.print_exc()
+    
+    def zoom_extension_completa(self, capas_vectoriales):
+        """
+        Hace zoom a la extensión completa del área de trabajo.
+        Prioriza mostrar TODA la ortofoto si existe, sino usa todas las capas vectoriales.
+        """
+        try:
+            print("\n   🔍 Ajustando zoom a extensión completa...")
+            
+            canvas = iface.mapCanvas()
+            extent = None
+            
+            # ESTRATEGIA 1: Si hay ortofoto, usar su extensión completa
+            if hasattr(self, 'ortofoto') and os.path.exists(self.ortofoto):
+                try:
+                    # Buscar la capa de ortofoto en el proyecto
+                    layers = QgsProject.instance().mapLayersByName("Ortofoto")
+                    if layers and len(layers) > 0:
+                        ortofoto_layer = layers[0]
+                        extent = ortofoto_layer.extent()
+                        print(f"      └─ Usando extensión de Ortofoto")
+                        print(f"         XMin: {extent.xMinimum():.2f}, XMax: {extent.xMaximum():.2f}")
+                        print(f"         YMin: {extent.yMinimum():.2f}, YMax: {extent.yMaximum():.2f}")
+                except Exception as ex:
+                    print(f"      └─ ⚠️ No se pudo obtener extensión de ortofoto: {ex}")
+            
+            # ESTRATEGIA 2: Si no hay ortofoto, usar extensión combinada de todas las capas vectoriales
+            if extent is None:
+                print(f"      └─ Ortofoto no disponible, usando capas vectoriales")
+                
+                extensiones = []
+                
+                # Recopilar extensiones de todas las capas
+                if 'terrenos' in capas_vectoriales:
+                    ext = capas_vectoriales['terrenos'].extent()
+                    if not ext.isEmpty():
+                        extensiones.append(ext)
+                
+                if 'construcciones' in capas_vectoriales:
+                    ext = capas_vectoriales['construcciones'].extent()
+                    if not ext.isEmpty():
+                        extensiones.append(ext)
+                
+                if 'ejevias' in capas_vectoriales:
+                    ext = capas_vectoriales['ejevias'].extent()
+                    if not ext.isEmpty():
+                        extensiones.append(ext)
+                
+                # Combinar todas las extensiones
+                if len(extensiones) > 0:
+                    extent = extensiones[0]
+                    for ext in extensiones[1:]:
+                        extent.combineExtentWith(ext)
+                    print(f"      └─ Extensión combinada de {len(extensiones)} capas")
+            
+            # Aplicar zoom
+            if extent and not extent.isEmpty():
+                # Agregar un margen del 5% para que no quede todo pegado a los bordes
+                extent.scale(1.05)
+                
+                canvas.setExtent(extent)
+                canvas.refresh()
+                
+                print("   ✅ Zoom ajustado correctamente")
+            else:
+                print("   ⚠️ No se pudo calcular extensión (sin capas válidas)")
+                # Zoom por defecto a toda la vista del canvas
+                canvas.zoomToFullExtent()
+            
+        except Exception as ex:
+            print(f"   ⚠️ Error al ajustar zoom: {str(ex)}")
+            import traceback
+            traceback.print_exc()
        
         
       
